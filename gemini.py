@@ -141,24 +141,14 @@ def remove_api_key(key):
     return False
 
 def list_api_keys():
-    """列出所有API key（仅显示部分字符）"""
+    """列出所有API key"""
     masked_keys = []
     for i, key in enumerate(api_keys):
-        # 根据键的长度进行脱敏处理
-        if len(key) > 8:
-            # 只显示前4位和后4位，中间用星号代替
-            visible_part = len(key) // 4  # 显示约1/4的字符
-            if visible_part < 2:
-                visible_part = 2
-            
-            masked_key = key[:visible_part] + "*" * (len(key) - visible_part*2) + key[-visible_part:]
-        else:
-            # 对于短密钥，至少保留首尾字符，确保不同密钥可区分
-            masked_key = key[0] + "*" * (max(len(key) - 2, 1)) + (key[-1] if len(key) > 1 else "")
-        
         # 标记当前使用的key
         if i == current_api_key_index:
-            masked_key = f"[当前] {masked_key}"
+            masked_key = f"[当前] {key}"
+        else:
+            masked_key = key
         masked_keys.append(masked_key)
     return masked_keys
 
@@ -592,8 +582,7 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
                     contents=[text_part, image_part],
                     config=types.GenerateContentConfig(
                         system_instruction=system_prompt,
-                        **generation_config,
-                        safety_settings=safety_settings
+                        **generation_config
                     )
                 )
                 
