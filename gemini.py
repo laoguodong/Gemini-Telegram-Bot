@@ -9,7 +9,6 @@ from telebot import TeleBot
 from config import conf, generation_config, draw_generation_config, lang_settings, DEFAULT_SYSTEM_PROMPT, safety_settings
 from google import genai
 from google.genai import types
-from google.genai.exceptions import ResourceExhaustedError, BadRequestError, PermissionDeniedError
 
 # API KEY管理
 api_keys = []  # 存储多个API key
@@ -686,59 +685,43 @@ async def gemini_draw(bot:TeleBot, message:Message, m:str):
                 if lang == "zh" and "用中文回复" not in m and "中文回答" not in m and "in English" not in m.lower():
                     m += "，请用中文回复"
                 
-                print(f"正在使用模型 {model_3} 尝试生成图像...")
-                
-                # 根据最新的API文档，使用正确的图像生成方法
-                image_model = client.get_model(model_3)
-                response = await image_model.aio.generate_content(
-                    m,
-                    # 确保responseModalities包含IMAGE
-                    response_modalities=["TEXT", "IMAGE"],
-                    safety_settings=safety_settings,
-                    generation_config={
-                        "temperature": draw_generation_config.get('temperature', 0.4),
-                        "top_p": draw_generation_config.get('top_p', 0.95),
-                        "top_k": draw_generation_config.get('top_k', 32),
-                        "max_output_tokens": draw_generation_config.get('max_output_tokens', 2048)
-                    }
+                # 使用新的API方式进行绘图
+                response = await client.aio.models.generate_content(
+                    model=model_3,
+                    contents=m,
+                    config=types.GenerateContentConfig(**draw_generation_config)
                 )
                 
                 # 检查响应
-                if not response or not hasattr(response, 'candidates') or not response.candidates:
+                if not hasattr(response, 'candidates') or not response.candidates:
                     error_msg = get_user_text(message.from_user.id, "error_info")
-                    await safe_edit_message(bot, f"{error_msg}\n没有生成任何内容", sent_message.chat.id, sent_message.message_id)
+                    await safe_edit_message(bot, f"{error_msg}\nNo candidates generated", sent_message.chat.id, sent_message.message_id)
                     break
                 
                 # 获取文本和图片
                 text = ""
-                img_count = 0
+                img = None
+                candidate = response.candidates[0]
                 
-                # 遍历candidates中的parts，获取文本和图像
-                for candidate in response.candidates:
-                    if hasattr(candidate, 'content') and candidate.content:
-                        for part in candidate.content.parts:
-                            if hasattr(part, 'text') and part.text:
-                                text += part.text
-                            if hasattr(part, 'inline_data') and part.inline_data:
-                                # 发送图像
-                                img_data = part.inline_data.data
-                                if img_data:
-                                    with io.BytesIO(img_data) as bio:
-                                        bio.name = f"gemini_image_{img_count}.png"
-                                        await bot.send_photo(message.chat.id, bio, caption=f"生成的图像 #{img_count+1}")
-                                        img_count += 1
+                if hasattr(candidate, 'content') and candidate.content:
+                    for part in candidate.content.parts:
+                        if hasattr(part, 'text') and part.text:
+                            text += part.text
+                        if hasattr(part, 'inline_data') and part.inline_data:
+                            img = part.inline_data.data
                 
-                # 发送文本描述（如果有）
+                # 先发送图片(如果有)
+                if img:
+                    with io.BytesIO(img) as bio:
+                        await bot.send_photo(message.chat.id, bio)
+                
+                # 然后发送文本(如果有)
                 if text:
                     if len(text) > 4000:
                         await bot.send_message(message.chat.id, escape(text[:4000]), parse_mode="MarkdownV2")
                         await bot.send_message(message.chat.id, escape(text[4000:]), parse_mode="MarkdownV2")
                     else:
                         await bot.send_message(message.chat.id, escape(text), parse_mode="MarkdownV2")
-                
-                # 如果没有生成图像，提示用户
-                if img_count == 0:
-                    await bot.send_message(message.chat.id, "未能生成图像，请尝试修改您的提示词。")
                 
                 # 删除"绘图中"消息
                 try:
@@ -749,31 +732,12 @@ async def gemini_draw(bot:TeleBot, message:Message, m:str):
                 # 成功生成图片，跳出循环
                 break
                 
-            except ResourceExhaustedError as e:
-                # 特别处理配额用尽的情况
-                print(f"API配额用尽: {str(e)}")
-                
-                # 尝试切换到下一个API密钥
-                if switch_to_next_api_key():
-                    # 提示用户正在切换API密钥
-                    try:
-                        await safe_edit_message(bot, get_user_text(message.from_user.id, "api_quota_exhausted"), sent_message.chat.id, sent_message.message_id)
-                    except Exception:
-                        pass
-                        
-                    retry_count += 1
-                    continue
-                else:
-                    # 所有API密钥都已尝试过
-                    error_msg = get_user_text(message.from_user.id, "error_info")
-                    await safe_edit_message(bot, f"{error_msg}\n{get_user_text(message.from_user.id, 'all_api_quota_exhausted')}", sent_message.chat.id, sent_message.message_id)
-                    break
             except Exception as e:
                 error_str = str(e)
-                print(f"图像生成错误: {error_str}")
                 
-                # 检查是否包含配额用尽的关键字
-                if "429 RESOURCE_EXHAUSTED" in error_str and "You exceeded your current quota" in error_str:
+                # 检查是否是配额用尽错误
+                if (hasattr(e, 'status_code') and e.status_code == 429) or \
+                   ("429 RESOURCE_EXHAUSTED" in error_str and "You exceeded your current quota" in error_str):
                     # 尝试切换到下一个API密钥
                     if switch_to_next_api_key():
                         # 提示用户正在切换API密钥
@@ -792,7 +756,7 @@ async def gemini_draw(bot:TeleBot, message:Message, m:str):
                 else:
                     # 其他错误，直接显示给用户
                     error_msg = get_user_text(message.from_user.id, "error_info")
-                    await safe_edit_message(bot, f"{error_msg}\n错误详情: {str(e)}", sent_message.chat.id, sent_message.message_id)
+                    await safe_edit_message(bot, f"{error_msg}\nError details: {str(e)}", sent_message.chat.id, sent_message.message_id)
                     break
             
             retry_count += 1
@@ -800,6 +764,6 @@ async def gemini_draw(bot:TeleBot, message:Message, m:str):
     except Exception as e:
         error_msg = get_user_text(message.from_user.id, "error_info")
         if sent_message:
-            await safe_edit_message(bot, f"{error_msg}\n错误详情: {str(e)}", sent_message.chat.id, sent_message.message_id)
+            await safe_edit_message(bot, f"{error_msg}\nError details: {str(e)}", sent_message.chat.id, sent_message.message_id)
         else:
-            await bot.reply_to(message, f"{error_msg}\n错误详情: {str(e)}")
+            await bot.reply_to(message, f"{error_msg}\nError details: {str(e)}")
