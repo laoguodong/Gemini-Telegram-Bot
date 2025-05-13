@@ -570,8 +570,19 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
                 # 使用用户系统提示词
                 system_prompt = get_system_prompt(message.from_user.id)
                 
-                # 当前模型名称
-                current_model_name = model_1  # 默认使用model_1
+                # 确定要使用的模型，根据用户通过 /switch 命令的选择
+                user_id_str = str(message.from_user.id)
+                selected_model_is_model_1 = True  # 默认情况下使用 model_1
+
+                if user_id_str in default_model_dict:
+                    selected_model_is_model_1 = default_model_dict[user_id_str] # True 表示 model_1, False 表示 model_2
+                # else: 如果用户未曾使用 /switch，则维持默认使用 model_1
+
+                if selected_model_is_model_1:
+                    current_model_name = model_1
+                else:
+                    current_model_name = model_2
+                
                 current_model_name_for_error_msg = current_model_name
                 
                 # 创建内容结构
