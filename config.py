@@ -123,10 +123,6 @@ generation_config = {
 
 # 为图像生成模型创建配置
 draw_generation_config = {
-    "response_modalities": ['TEXT', 'IMAGE'],
+    "response_modalities": ['Text', 'IMAGE'],
     "safety_settings": safety_settings,
-    "temperature": 0.4,
-    "top_p": 0.95,
-    "top_k": 32,
-    "max_output_tokens": 2048,
 }

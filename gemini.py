@@ -9,6 +9,7 @@ from telebot import TeleBot
 from config import conf, generation_config, draw_generation_config, lang_settings, DEFAULT_SYSTEM_PROMPT, safety_settings
 from google import genai
 from google.genai import types
+from google.genai.exceptions import ResourceExhaustedError, BadRequestError, PermissionDeniedError
 
 # API KEY管理
 api_keys = []  # 存储多个API key
@@ -748,13 +749,31 @@ async def gemini_draw(bot:TeleBot, message:Message, m:str):
                 # 成功生成图片，跳出循环
                 break
                 
+            except ResourceExhaustedError as e:
+                # 特别处理配额用尽的情况
+                print(f"API配额用尽: {str(e)}")
+                
+                # 尝试切换到下一个API密钥
+                if switch_to_next_api_key():
+                    # 提示用户正在切换API密钥
+                    try:
+                        await safe_edit_message(bot, get_user_text(message.from_user.id, "api_quota_exhausted"), sent_message.chat.id, sent_message.message_id)
+                    except Exception:
+                        pass
+                        
+                    retry_count += 1
+                    continue
+                else:
+                    # 所有API密钥都已尝试过
+                    error_msg = get_user_text(message.from_user.id, "error_info")
+                    await safe_edit_message(bot, f"{error_msg}\n{get_user_text(message.from_user.id, 'all_api_quota_exhausted')}", sent_message.chat.id, sent_message.message_id)
+                    break
             except Exception as e:
                 error_str = str(e)
                 print(f"图像生成错误: {error_str}")
                 
-                # 检查是否是配额用尽错误
-                if ("429" in error_str and "RESOURCE_EXHAUSTED" in error_str) or \
-                   ("exceeded your current quota" in error_str):
+                # 检查是否包含配额用尽的关键字
+                if "429 RESOURCE_EXHAUSTED" in error_str and "You exceeded your current quota" in error_str:
                     # 尝试切换到下一个API密钥
                     if switch_to_next_api_key():
                         # 提示用户正在切换API密钥
