@@ -8,7 +8,8 @@ import gemini
 # 直接从 gemini 模块导入语言相关功能
 from gemini import (
     get_user_text, get_user_lang, switch_language, get_language,
-    set_system_prompt, delete_system_prompt, reset_system_prompt, show_system_prompt
+    set_system_prompt, delete_system_prompt, reset_system_prompt, show_system_prompt,
+    add_api_key, remove_api_key, list_api_keys, set_current_api_key, get_current_api_key
 )
 
 error_info              =       conf["error_info"]
@@ -205,3 +206,137 @@ async def system_prompt_reset_handler(message: Message, bot: TeleBot) -> None:
 # 显示系统提示词处理函数
 async def system_prompt_show_handler(message: Message, bot: TeleBot) -> None:
     await show_system_prompt(bot, message)
+
+# API KEY管理处理函数
+async def api_key_add_handler(message: Message, bot: TeleBot) -> None:
+    """添加新API KEY"""
+    # 检查是否是私聊
+    if message.chat.type != "private":
+        private_chat_msg = get_user_text(message.from_user.id, "private_chat_only")
+        await bot.reply_to(message, private_chat_msg)
+        return
+        
+    try:
+        # 获取API KEY
+        api_key = message.text.strip().split(maxsplit=1)[1].strip()
+        
+        # 删除包含API KEY的消息(安全措施)
+        try:
+            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+        except Exception:
+            pass
+        
+        # 验证API KEY格式
+        if not gemini.validate_api_key_format(api_key):
+            await bot.send_message(
+                message.chat.id, 
+                get_user_text(message.from_user.id, "api_key_invalid_format")
+            )
+            return
+        
+        # 添加API KEY
+        result = gemini.add_api_key(api_key)
+        
+        if result:
+            await bot.send_message(message.chat.id, get_user_text(message.from_user.id, "api_key_added"))
+        else:
+            # 可能是已存在的密钥或初始化客户端失败
+            if api_key in gemini.api_keys:
+                await bot.send_message(message.chat.id, get_user_text(message.from_user.id, "api_key_already_exists"))
+            else:
+                await bot.send_message(message.chat.id, get_user_text(message.from_user.id, "api_key_invalid"))
+    except IndexError:
+        await bot.reply_to(message, get_user_text(message.from_user.id, "api_key_add_help"))
+
+async def api_key_remove_handler(message: Message, bot: TeleBot) -> None:
+    """删除API KEY"""
+    # 检查是否是私聊
+    if message.chat.type != "private":
+        private_chat_msg = get_user_text(message.from_user.id, "private_chat_only")
+        await bot.reply_to(message, private_chat_msg)
+        return
+        
+    try:
+        # 获取API KEY或索引
+        key_or_index = message.text.strip().split(maxsplit=1)[1].strip()
+        
+        # 尝试将输入解析为索引
+        try:
+            index = int(key_or_index)
+            keys = list_api_keys()
+            if 0 <= index < len(keys):
+                # 获取实际的KEY（需要在list_api_keys中修改，返回实际KEY而不是掩码）
+                real_key = gemini.api_keys[index]
+                result = remove_api_key(real_key)
+                await bot.send_message(
+                    message.chat.id, 
+                    f"{get_user_text(message.from_user.id, 'api_key_removed')} (#{index})"
+                )
+            else:
+                await bot.send_message(message.chat.id, get_user_text(message.from_user.id, "api_key_switch_invalid"))
+        except ValueError:
+            # 输入不是索引，当作完整API KEY处理
+            result = remove_api_key(key_or_index)
+            
+            # 删除包含API KEY的消息(安全措施)
+            try:
+                await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+            except Exception:
+                pass
+                
+            if result:
+                await bot.send_message(message.chat.id, get_user_text(message.from_user.id, "api_key_removed"))
+            else:
+                await bot.send_message(message.chat.id, get_user_text(message.from_user.id, "api_key_not_found"))
+    except IndexError:
+        await bot.reply_to(message, get_user_text(message.from_user.id, "api_key_remove_help"))
+
+async def api_key_list_handler(message: Message, bot: TeleBot) -> None:
+    """列出所有API KEY"""
+    # 检查是否是私聊
+    if message.chat.type != "private":
+        private_chat_msg = get_user_text(message.from_user.id, "private_chat_only")
+        await bot.reply_to(message, private_chat_msg)
+        return
+        
+    keys = list_api_keys()
+    if keys:
+        keys_list = "\n".join([f"{i}. {key}" for i, key in enumerate(keys)])
+        title = get_user_text(message.from_user.id, "api_key_list_title")
+        await bot.send_message(message.chat.id, f"{title}\n{keys_list}")
+    else:
+        await bot.send_message(message.chat.id, get_user_text(message.from_user.id, "api_key_list_empty"))
+
+async def api_key_switch_handler(message: Message, bot: TeleBot) -> None:
+    """切换当前使用的API KEY"""
+    # 检查是否是私聊
+    if message.chat.type != "private":
+        private_chat_msg = get_user_text(message.from_user.id, "private_chat_only")
+        await bot.reply_to(message, private_chat_msg)
+        return
+        
+    try:
+        # 获取索引
+        index = int(message.text.strip().split(maxsplit=1)[1].strip())
+        
+        # 设置当前API KEY
+        result = set_current_api_key(index)
+        
+        if result:
+            # 重置聊天历史，以便使用新的API KEY
+            if str(message.from_user.id) in gemini_chat_dict:
+                del gemini_chat_dict[str(message.from_user.id)]
+            if str(message.from_user.id) in gemini_pro_chat_dict:
+                del gemini_pro_chat_dict[str(message.from_user.id)]
+            if str(message.from_user.id) in gemini_draw_dict:
+                del gemini_draw_dict[str(message.from_user.id)]
+                
+            # 显示当前使用的API KEY信息
+            keys = list_api_keys()
+            current_key = keys[index] if index < len(keys) else "?"
+            switched_msg = get_user_text(message.from_user.id, "api_key_switched")
+            await bot.send_message(message.chat.id, f"{switched_msg}: {current_key}")
+        else:
+            await bot.send_message(message.chat.id, get_user_text(message.from_user.id, "api_key_switch_invalid"))
+    except (IndexError, ValueError):
+        await bot.reply_to(message, get_user_text(message.from_user.id, "api_key_switch_help"))
