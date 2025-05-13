@@ -553,6 +553,19 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
             else:
                 prompt = "Describe this image"
 
+        # 根据用户当前选择的模型偏好决定使用哪个模型
+        user_id_str = str(message.from_user.id)
+        if user_id_str not in default_model_dict:
+            default_model_dict[user_id_str] = False  # 默认使用 model_2
+        
+        # 选择当前模型
+        if default_model_dict[user_id_str]:
+            current_model_name = model_1
+        else:
+            current_model_name = model_2
+        
+        current_model_name_for_error_msg = current_model_name
+        
         # 尝试理解图片，处理API密钥额度用尽的情况
         max_retry_attempts = len(api_keys)
         retry_count = 0
@@ -567,10 +580,6 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
 
                 # 使用用户系统提示词
                 system_prompt = get_system_prompt(message.from_user.id)
-                
-                # 当前模型名称
-                current_model_name = model_1  # 默认使用model_1
-                current_model_name_for_error_msg = current_model_name
                 
                 # 创建内容结构
                 image_part = types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
