@@ -82,10 +82,12 @@ def switch_to_next_api_key():
     # 更新客户端
     try:
         client = genai.Client(api_key=api_keys[current_api_key_index])
+        print(f"成功切换到API密钥 #{current_api_key_index}")
         return True
     except Exception as e:
         print(f"Error switching to next API key: {e}")
-        return False
+        # 如果切换失败，不要直接返回False，而是递归调用自己尝试下一个密钥
+        return switch_to_next_api_key()
 
 def validate_api_key_format(key):
     """验证API密钥格式（简单检查）"""
