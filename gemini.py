@@ -571,7 +571,7 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
                 system_prompt = get_system_prompt(message.from_user.id)
                 
                 # 当前模型名称
-                current_model_name = model_1  # 默认使用model_1
+                current_model_name = model_2  # 默认使用model_2
                 current_model_name_for_error_msg = current_model_name
                 
                 # 创建内容结构
