@@ -272,6 +272,23 @@ async def show_system_prompt(bot: TeleBot, message: Message):
     prompt = get_system_prompt(user_id)
     await bot.reply_to(message, f"{get_user_text(user_id, 'system_prompt_current')}\n{prompt}")
 
+# 添加一个安全的消息编辑函数
+async def safe_edit_message(bot, text, chat_id, message_id, parse_mode=None):
+    """安全地编辑消息，处理'message is not modified'错误"""
+    try:
+        kwargs = {
+            "text": text,
+            "chat_id": chat_id,
+            "message_id": message_id
+        }
+        if parse_mode:
+            kwargs["parse_mode"] = parse_mode
+        
+        await bot.edit_message_text(**kwargs)
+    except Exception as e:
+        if "message is not modified" not in str(e).lower():
+            print(f"Error editing message: {e}")
+
 async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
     sent_message = None
     try:
@@ -338,39 +355,21 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
                         if current_time - last_update >= update_interval:
 
                             try:
-                                await bot.edit_message_text(
-                                    escape(full_response),
-                                    chat_id=sent_message.chat.id,
-                                    message_id=sent_message.message_id,
-                                    parse_mode="MarkdownV2"
-                                    )
+                                await safe_edit_message(bot, escape(full_response), sent_message.chat.id, sent_message.message_id, "MarkdownV2")
                             except Exception as e:
                                 if "parse markdown" in str(e).lower():
-                                    await bot.edit_message_text(
-                                        full_response,
-                                        chat_id=sent_message.chat.id,
-                                        message_id=sent_message.message_id
-                                        )
+                                    await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
                                 else:
                                     if "message is not modified" not in str(e).lower():
                                         print(f"Error updating message: {e}")
                             last_update = current_time
 
                 try:
-                    await bot.edit_message_text(
-                        escape(full_response),
-                        chat_id=sent_message.chat.id,
-                        message_id=sent_message.message_id,
-                        parse_mode="MarkdownV2"
-                    )
+                    await safe_edit_message(bot, escape(full_response), sent_message.chat.id, sent_message.message_id, "MarkdownV2")
                 except Exception as e:
                     try:
                         if "parse markdown" in str(e).lower():
-                            await bot.edit_message_text(
-                                full_response,
-                                chat_id=sent_message.chat.id,
-                                message_id=sent_message.message_id
-                            )
+                            await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
                     except Exception:
                         print(f"Final message update error: {e}")
                 
@@ -387,11 +386,7 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
                     if switch_to_next_api_key():
                         # 提示用户正在切换API密钥
                         try:
-                            await bot.edit_message_text(
-                                get_user_text(message.from_user.id, "api_quota_exhausted"),
-                                chat_id=sent_message.chat.id,
-                                message_id=sent_message.message_id
-                            )
+                            await safe_edit_message(bot, get_user_text(message.from_user.id, "api_quota_exhausted"), sent_message.chat.id, sent_message.message_id)
                         except Exception:
                             pass
                         
@@ -412,30 +407,18 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
                             print(f"Error recreating chat with new API key: {chat_error}")
                     else:
                         # 所有API密钥都已尝试过
-                        await bot.edit_message_text(
-                            f"{error_info}\n{get_user_text(message.from_user.id, 'all_api_quota_exhausted')}",
-                            chat_id=sent_message.chat.id,
-                            message_id=sent_message.message_id
-                        )
+                        await safe_edit_message(bot, f"{error_info}\n{get_user_text(message.from_user.id, 'all_api_quota_exhausted')}", sent_message.chat.id, sent_message.message_id)
                         break
                 else:
                     # 其他错误，直接显示给用户
-                    await bot.edit_message_text(
-                        f"{error_info}\nError details: {str(e)}",
-                        chat_id=sent_message.chat.id,
-                        message_id=sent_message.message_id
-                    )
+                    await safe_edit_message(bot, f"{error_info}\nError details: {str(e)}", sent_message.chat.id, sent_message.message_id)
                     break
                     
             retry_count += 1
             
     except Exception as e:
         if sent_message:
-            await bot.edit_message_text(
-                f"{error_info}\nError details: {str(e)}",
-                chat_id=sent_message.chat.id,
-                message_id=sent_message.message_id
-            )
+            await safe_edit_message(bot, f"{error_info}\nError details: {str(e)}", sent_message.chat.id, sent_message.message_id)
         else:
             await bot.reply_to(message, f"{error_info}\nError details: {str(e)}")
 
@@ -461,11 +444,7 @@ async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes)
                 image.save(buffer, format="JPEG")
                 image_bytes = buffer.getvalue()
             except Exception as img_error:
-                await bot.edit_message_text(
-                    f"{error_info}\n图像处理错误: {str(img_error)}",
-                    chat_id=sent_message.chat.id,
-                    message_id=sent_message.message_id
-                )
+                await safe_edit_message(bot, f"{error_info}\n图像处理错误: {str(img_error)}", sent_message.chat.id, sent_message.message_id)
                 return
             
             # 获取用户语言
@@ -488,11 +467,7 @@ async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes)
             
             # 检查响应
             if not hasattr(response, 'candidates') or not response.candidates or not hasattr(response.candidates[0], 'content'):
-                await bot.edit_message_text(
-                    f"{error_info}\n无效的响应", 
-                    chat_id=sent_message.chat.id,
-                    message_id=sent_message.message_id
-                )
+                await safe_edit_message(bot, f"{error_info}\n无效的响应", sent_message.chat.id, sent_message.message_id)
                 return
             
             # 处理响应
@@ -519,11 +494,7 @@ async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes)
                 if switch_to_next_api_key():
                     # 提示用户正在切换API密钥
                     try:
-                        await bot.edit_message_text(
-                            get_user_text(message.from_user.id, "api_quota_exhausted"),
-                            chat_id=sent_message.chat.id,
-                            message_id=sent_message.message_id
-                        )
+                        await safe_edit_message(bot, get_user_text(message.from_user.id, "api_quota_exhausted"), sent_message.chat.id, sent_message.message_id)
                     except Exception:
                         pass
                     
@@ -531,19 +502,11 @@ async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes)
                     continue
                 else:
                     # 所有API密钥都已尝试过
-                    await bot.edit_message_text(
-                        f"{error_info}\n{get_user_text(message.from_user.id, 'all_api_quota_exhausted')}",
-                        chat_id=sent_message.chat.id,
-                        message_id=sent_message.message_id
-                    )
+                    await safe_edit_message(bot, f"{error_info}\n{get_user_text(message.from_user.id, 'all_api_quota_exhausted')}", sent_message.chat.id, sent_message.message_id)
                     break
             else:
                 # 其他错误，直接显示给用户
-                await bot.edit_message_text(
-                    f"{error_info}\nError details: {str(e)}",
-                    chat_id=sent_message.chat.id,
-                    message_id=sent_message.message_id
-                )
+                await safe_edit_message(bot, f"{error_info}\nError details: {str(e)}", sent_message.chat.id, sent_message.message_id)
                 break
         
         retry_count += 1
@@ -617,19 +580,10 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
                     
                         if current_time - last_update >= update_interval:
                             try:
-                                await bot.edit_message_text(
-                                    escape(full_response),
-                                    chat_id=sent_message.chat.id,
-                                    message_id=sent_message.message_id,
-                                    parse_mode="MarkdownV2"
-                                )
+                                await safe_edit_message(bot, escape(full_response), sent_message.chat.id, sent_message.message_id, "MarkdownV2")
                             except Exception as e_stream:
                                 if "parse markdown" in str(e_stream).lower():
-                                    await bot.edit_message_text(
-                                        full_response,
-                                        chat_id=sent_message.chat.id,
-                                        message_id=sent_message.message_id
-                                    )
+                                    await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
                                 elif "message is not modified" not in str(e_stream).lower():
                                     print(f"Streaming update error for image understanding: {e_stream}")
                             
@@ -637,18 +591,9 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
                 
                 # Final update - try with markdown first, fall back to plain text
                 try:
-                    await bot.edit_message_text(
-                        escape(full_response),
-                        chat_id=sent_message.chat.id,
-                        message_id=sent_message.message_id,
-                        parse_mode="MarkdownV2"
-                    )
+                    await safe_edit_message(bot, escape(full_response), sent_message.chat.id, sent_message.message_id, "MarkdownV2")
                 except Exception: # Fallback to sending raw text if markdown parsing fails on the final message
-                    await bot.edit_message_text(
-                        full_response,
-                        chat_id=sent_message.chat.id,
-                        message_id=sent_message.message_id
-                    )
+                    await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
                 
                 # 成功处理图片，跳出循环
                 break
@@ -663,11 +608,7 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
                     if switch_to_next_api_key():
                         # 提示用户正在切换API密钥
                         try:
-                            await bot.edit_message_text(
-                                get_user_text(message.from_user.id, "api_quota_exhausted"),
-                                chat_id=sent_message.chat.id,
-                                message_id=sent_message.message_id
-                            )
+                            await safe_edit_message(bot, get_user_text(message.from_user.id, "api_quota_exhausted"), sent_message.chat.id, sent_message.message_id)
                         except Exception:
                             pass
                         
@@ -675,11 +616,7 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
                         continue
                     else:
                         # 所有API密钥都已尝试过
-                        await bot.edit_message_text(
-                            f"{error_info}\n{get_user_text(message.from_user.id, 'all_api_quota_exhausted')}",
-                            chat_id=sent_message.chat.id,
-                            message_id=sent_message.message_id
-                        )
+                        await safe_edit_message(bot, f"{error_info}\n{get_user_text(message.from_user.id, 'all_api_quota_exhausted')}", sent_message.chat.id, sent_message.message_id)
                         break
                 else:
                     # General exception handler
@@ -709,7 +646,7 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
                             )
                     
                     if sent_message: # If a message was already sent to the user, edit it with the error
-                        await bot.edit_message_text(error_message, chat_id=sent_message.chat.id, message_id=sent_message.message_id)
+                        await safe_edit_message(bot, error_message, sent_message.chat.id, sent_message.message_id)
                     else: # Otherwise, reply to the original message with the error
                         await bot.reply_to(message, error_message)
                     break
@@ -718,11 +655,7 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
                 
     except Exception as e:
         if sent_message:
-            await bot.edit_message_text(
-                f"{error_info}\nError details: {str(e)}",
-                chat_id=sent_message.chat.id,
-                message_id=sent_message.message_id
-            )
+            await safe_edit_message(bot, f"{error_info}\nError details: {str(e)}", sent_message.chat.id, sent_message.message_id)
         else:
             await bot.reply_to(message, f"{error_info}\nError details: {str(e)}")
 
@@ -760,11 +693,7 @@ async def gemini_draw(bot:TeleBot, message:Message, m:str):
                 # 检查响应
                 if not hasattr(response, 'candidates') or not response.candidates:
                     error_msg = get_user_text(message.from_user.id, "error_info")
-                    await bot.edit_message_text(
-                        f"{error_msg}\nNo candidates generated",
-                        chat_id=sent_message.chat.id,
-                        message_id=sent_message.message_id
-                    )
+                    await safe_edit_message(bot, f"{error_msg}\nNo candidates generated", sent_message.chat.id, sent_message.message_id)
                     break
                 
                 # 获取文本和图片
@@ -811,11 +740,7 @@ async def gemini_draw(bot:TeleBot, message:Message, m:str):
                     if switch_to_next_api_key():
                         # 提示用户正在切换API密钥
                         try:
-                            await bot.edit_message_text(
-                                get_user_text(message.from_user.id, "api_quota_exhausted"),
-                                chat_id=sent_message.chat.id,
-                                message_id=sent_message.message_id
-                            )
+                            await safe_edit_message(bot, get_user_text(message.from_user.id, "api_quota_exhausted"), sent_message.chat.id, sent_message.message_id)
                         except Exception:
                             pass
                             
@@ -824,20 +749,12 @@ async def gemini_draw(bot:TeleBot, message:Message, m:str):
                     else:
                         # 所有API密钥都已尝试过
                         error_msg = get_user_text(message.from_user.id, "error_info")
-                        await bot.edit_message_text(
-                            f"{error_msg}\n{get_user_text(message.from_user.id, 'all_api_quota_exhausted')}",
-                            chat_id=sent_message.chat.id,
-                            message_id=sent_message.message_id
-                        )
+                        await safe_edit_message(bot, f"{error_msg}\n{get_user_text(message.from_user.id, 'all_api_quota_exhausted')}", sent_message.chat.id, sent_message.message_id)
                         break
                 else:
                     # 其他错误，直接显示给用户
                     error_msg = get_user_text(message.from_user.id, "error_info")
-                    await bot.edit_message_text(
-                        f"{error_msg}\nError details: {str(e)}",
-                        chat_id=sent_message.chat.id,
-                        message_id=sent_message.message_id
-                    )
+                    await safe_edit_message(bot, f"{error_msg}\nError details: {str(e)}", sent_message.chat.id, sent_message.message_id)
                     break
             
             retry_count += 1
@@ -845,10 +762,6 @@ async def gemini_draw(bot:TeleBot, message:Message, m:str):
     except Exception as e:
         error_msg = get_user_text(message.from_user.id, "error_info")
         if sent_message:
-            await bot.edit_message_text(
-                f"{error_msg}\nError details: {str(e)}",
-                chat_id=sent_message.chat.id,
-                message_id=sent_message.message_id
-            )
+            await safe_edit_message(bot, f"{error_msg}\nError details: {str(e)}", sent_message.chat.id, sent_message.message_id)
         else:
             await bot.reply_to(message, f"{error_msg}\nError details: {str(e)}")
