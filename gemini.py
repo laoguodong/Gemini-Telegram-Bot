@@ -18,6 +18,8 @@ current_api_key_index = 0  # 当前使用的API key索引
 if len(sys.argv) > 2:
     # 支持多种格式的密钥输入：逗号分隔、换行分隔或两者的组合
     input_keys = sys.argv[2]
+    # 替换中文逗号为英文逗号
+    input_keys = input_keys.replace('，', ',')
     # 先按逗号分割
     comma_split_keys = input_keys.split(',')
     

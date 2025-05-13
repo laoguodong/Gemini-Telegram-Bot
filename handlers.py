@@ -226,7 +226,8 @@ async def api_key_add_handler(message: Message, bot: TeleBot) -> None:
         except Exception:
             pass
         
-        # 支持逗号分隔的多个密钥
+        # 支持中英文逗号分隔的多个密钥
+        input_text = input_text.replace('，', ',')  # 替换中文逗号为英文逗号
         keys_input = input_text.split(',')
         added_count = 0
         existed_count = 0
