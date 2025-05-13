@@ -10,75 +10,25 @@ from gemini import user_language_dict, get_user_lang
 import sys
 import os
 
-# 简化命令行参数解析
-parser = argparse.ArgumentParser(description='Gemini Telegram Bot')
-parser.add_argument("tg_token", help="Telegram机器人令牌")
-parser.add_argument("--keys_file", help="包含API密钥的文件路径，每行一个密钥")
-args = parser.parse_args()
+# 恢复原始的参数解析方式
+parser = argparse.ArgumentParser()
+parser.add_argument("tg_token", help="Telegram token")
+parser.add_argument("GOOGLE_GEMINI_KEY", help="Google Gemini API key")
+options = parser.parse_args()
 
-# 处理API密钥
-api_keys = []
-
-# 如果直接传递了单个API密钥作为第二个参数（而不是以--keys_file开头的参数）
-if len(sys.argv) > 2 and not sys.argv[2].startswith('--'):
-    # 获取第二个命令行参数
-    api_key_arg = sys.argv[2]
-    # 移除可能存在的中英文逗号和空格
-    api_key_arg = api_key_arg.replace('，', ',').strip()
-    # 仅取第一个密钥（忽略逗号后面的所有内容）
-    if ',' in api_key_arg:
-        api_key_arg = api_key_arg.split(',')[0]
-    # 如果不为空，则添加到密钥列表
-    if api_key_arg:
-        api_keys.append(api_key_arg)
-    
-    # 更新 sys.argv[2] 为清理后的密钥
-    sys.argv[2] = api_key_arg
-
-# 首先尝试从环境变量中获取API密钥
-env_keys = os.environ.get('GEMINI_API_KEYS', '')
-if env_keys:
-    # 替换中文逗号为英文逗号
-    env_keys = env_keys.replace('，', ',')
-    for key in env_keys.split(','):
-        cleaned_key = key.strip()
-        if cleaned_key:
-            api_keys.append(cleaned_key)
-
-# 然后尝试从文件中读取API密钥
-if args.keys_file and os.path.exists(args.keys_file):
-    try:
-        with open(args.keys_file, 'r') as f:
-            for line in f:
-                # 移除可能的逗号、空格和换行符
-                # 替换中文逗号为英文逗号
-                line = line.replace('，', ',')
-                for key in line.split(','):
-                    clean_key = key.strip().rstrip(",")
-                    if clean_key:
-                        api_keys.append(clean_key)
-    except Exception as e:
-        print(f"读取密钥文件时出错: {e}")
-
-# 确保sys.argv[2]存在并包含所有API密钥
-if api_keys:
-    if len(sys.argv) <= 2:
-        sys.argv.append(",".join(api_keys))
-    else:
-        sys.argv[2] = ",".join(api_keys)
-else:
-    # 如果没有找到API密钥，添加一个空字符串作为占位符
-    if len(sys.argv) <= 2:
-        sys.argv.append("")
-    else:
-        sys.argv[2] = ""
+# 处理API密钥中可能的中文逗号
+if options.GOOGLE_GEMINI_KEY:
+    options.GOOGLE_GEMINI_KEY = options.GOOGLE_GEMINI_KEY.replace('，', ',')
+    # 确保sys.argv[2]包含处理后的密钥，以便gemini.py能正确读取
+    if len(sys.argv) > 2:
+        sys.argv[2] = options.GOOGLE_GEMINI_KEY
 
 print("Arg parse done.")
 
 
 async def main():
     # Init bot
-    bot = AsyncTeleBot(args.tg_token)
+    bot = AsyncTeleBot(options.tg_token)
     
     # 定义中英文菜单
     menu_zh = [
