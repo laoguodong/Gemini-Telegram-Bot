@@ -7,12 +7,22 @@ from telebot.async_telebot import AsyncTeleBot
 import handlers
 from config import conf, generation_config, safety_settings, lang_settings
 from gemini import user_language_dict, get_user_lang
+import sys
+import os
 
-# Init args
+# 恢复原始的参数解析方式
 parser = argparse.ArgumentParser()
-parser.add_argument("tg_token", help="telegram token")
+parser.add_argument("tg_token", help="Telegram token")
 parser.add_argument("GOOGLE_GEMINI_KEY", help="Google Gemini API key")
 options = parser.parse_args()
+
+# 处理API密钥中可能的中文逗号
+if options.GOOGLE_GEMINI_KEY:
+    options.GOOGLE_GEMINI_KEY = options.GOOGLE_GEMINI_KEY.replace('，', ',')
+    # 确保sys.argv[2]包含处理后的密钥，以便gemini.py能正确读取
+    if len(sys.argv) > 2:
+        sys.argv[2] = options.GOOGLE_GEMINI_KEY
+
 print("Arg parse done.")
 
 
@@ -34,7 +44,11 @@ async def main():
         telebot.types.BotCommand("system", "设置系统提示词"),
         telebot.types.BotCommand("system_clear", "删除系统提示词"),
         telebot.types.BotCommand("system_reset", "重置系统提示词"),
-        telebot.types.BotCommand("system_show", "显示当前系统提示词")
+        telebot.types.BotCommand("system_show", "显示当前系统提示词"),
+        telebot.types.BotCommand("api_add", "添加API密钥"),
+        telebot.types.BotCommand("api_remove", "删除API密钥"),
+        telebot.types.BotCommand("api_list", "查看API密钥列表"),
+        telebot.types.BotCommand("api_switch", "切换当前API密钥")
     ]
     
     menu_en = [
@@ -50,7 +64,11 @@ async def main():
         telebot.types.BotCommand("system", "set system prompt"),
         telebot.types.BotCommand("system_clear", "delete system prompt"),
         telebot.types.BotCommand("system_reset", "reset system prompt"),
-        telebot.types.BotCommand("system_show", "show current system prompt")
+        telebot.types.BotCommand("system_show", "show current system prompt"),
+        telebot.types.BotCommand("api_add", "add API key"),
+        telebot.types.BotCommand("api_remove", "remove API key"),
+        telebot.types.BotCommand("api_list", "list all API keys"),
+        telebot.types.BotCommand("api_switch", "switch current API key")
     ]
     
     # 默认使用中文菜单
@@ -95,6 +113,10 @@ async def main():
     bot.register_message_handler(handlers.system_prompt_clear_handler,   commands=['system_clear'],  pass_bot=True)
     bot.register_message_handler(handlers.system_prompt_reset_handler,   commands=['system_reset'],  pass_bot=True)
     bot.register_message_handler(handlers.system_prompt_show_handler,    commands=['system_show'],   pass_bot=True)
+    bot.register_message_handler(handlers.api_key_add_handler,           commands=['api_add'],       pass_bot=True)
+    bot.register_message_handler(handlers.api_key_remove_handler,        commands=['api_remove'],    pass_bot=True)
+    bot.register_message_handler(handlers.api_key_list_handler,          commands=['api_list'],      pass_bot=True)
+    bot.register_message_handler(handlers.api_key_switch_handler,        commands=['api_switch'],    pass_bot=True)
     bot.register_message_handler(handlers.gemini_photo_handler,          content_types=["photo"],    pass_bot=True)
     bot.register_message_handler(
         handlers.gemini_private_handler,
