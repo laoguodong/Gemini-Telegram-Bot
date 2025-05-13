@@ -217,8 +217,8 @@ async def api_key_add_handler(message: Message, bot: TeleBot) -> None:
         return
         
     try:
-        # 获取API KEY
-        api_key = message.text.strip().split(maxsplit=1)[1].strip()
+        # 获取API KEY输入
+        input_text = message.text.strip().split(maxsplit=1)[1].strip()
         
         # 删除包含API KEY的消息(安全措施)
         try:
@@ -226,25 +226,57 @@ async def api_key_add_handler(message: Message, bot: TeleBot) -> None:
         except Exception:
             pass
         
-        # 验证API KEY格式
-        if not gemini.validate_api_key_format(api_key):
+        # 支持逗号分隔的多个密钥
+        keys_input = input_text.split(',')
+        added_count = 0
+        existed_count = 0
+        invalid_count = 0
+        
+        for api_key in keys_input:
+            api_key = api_key.strip()
+            if not api_key:
+                continue
+                
+            # 验证API KEY格式
+            if not gemini.validate_api_key_format(api_key):
+                invalid_count += 1
+                continue
+            
+            # 添加API KEY
+            result = gemini.add_api_key(api_key)
+            
+            if result:
+                added_count += 1
+            else:
+                # 可能是已存在的密钥或初始化客户端失败
+                if api_key in gemini.api_keys:
+                    existed_count += 1
+                else:
+                    invalid_count += 1
+        
+        # 发送结果消息
+        response_parts = []
+        
+        if added_count > 0:
+            if added_count == 1:
+                response_parts.append(get_user_text(message.from_user.id, "api_key_added"))
+            else:
+                response_parts.append(f"已添加 {added_count} 个新API密钥")
+        
+        if existed_count > 0:
+            response_parts.append(f"{existed_count} 个密钥已存在")
+            
+        if invalid_count > 0:
+            response_parts.append(f"{invalid_count} 个密钥格式无效或验证失败")
+            
+        if not response_parts:  # 如果没有处理任何密钥
             await bot.send_message(
                 message.chat.id, 
                 get_user_text(message.from_user.id, "api_key_invalid_format")
             )
-            return
-        
-        # 添加API KEY
-        result = gemini.add_api_key(api_key)
-        
-        if result:
-            await bot.send_message(message.chat.id, get_user_text(message.from_user.id, "api_key_added"))
         else:
-            # 可能是已存在的密钥或初始化客户端失败
-            if api_key in gemini.api_keys:
-                await bot.send_message(message.chat.id, get_user_text(message.from_user.id, "api_key_already_exists"))
-            else:
-                await bot.send_message(message.chat.id, get_user_text(message.from_user.id, "api_key_invalid"))
+            await bot.send_message(message.chat.id, "，".join(response_parts))
+            
     except IndexError:
         await bot.reply_to(message, get_user_text(message.from_user.id, "api_key_add_help"))
 
