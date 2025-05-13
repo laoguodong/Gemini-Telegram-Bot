@@ -16,10 +16,18 @@ current_api_key_index = 0  # 当前使用的API key索引
 
 # 初始化API key列表
 if len(sys.argv) > 2:
-    initial_keys = sys.argv[2].split(',')
-    for key in initial_keys:
-        if key.strip():
-            api_keys.append(key.strip())
+    # 支持多种格式的密钥输入：逗号分隔、换行分隔或两者的组合
+    input_keys = sys.argv[2]
+    # 先按逗号分割
+    comma_split_keys = input_keys.split(',')
+    
+    for item in comma_split_keys:
+        # 对于每个逗号分割的项，再按换行符分割
+        line_split_keys = item.splitlines()
+        for key in line_split_keys:
+            clean_key = key.strip()
+            if clean_key:
+                api_keys.append(clean_key)
 
 gemini_draw_dict = {}
 gemini_chat_dict = {}
@@ -141,14 +149,24 @@ def remove_api_key(key):
     return False
 
 def list_api_keys():
-    """列出所有API key"""
+    """列出所有API key（仅显示部分字符）"""
     masked_keys = []
     for i, key in enumerate(api_keys):
+        # 根据键的长度进行脱敏处理
+        if len(key) > 8:
+            # 只显示前4位和后4位，中间用星号代替
+            visible_part = len(key) // 4  # 显示约1/4的字符
+            if visible_part < 2:
+                visible_part = 2
+            
+            masked_key = key[:visible_part] + "*" * (len(key) - visible_part*2) + key[-visible_part:]
+        else:
+            # 对于短密钥，至少保留首尾字符，确保不同密钥可区分
+            masked_key = key[0] + "*" * (max(len(key) - 2, 1)) + (key[-1] if len(key) > 1 else "")
+        
         # 标记当前使用的key
         if i == current_api_key_index:
-            masked_key = f"[当前] {key}"
-        else:
-            masked_key = key
+            masked_key = f"[当前] {masked_key}"
         masked_keys.append(masked_key)
     return masked_keys
 
@@ -553,19 +571,6 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
             else:
                 prompt = "Describe this image"
 
-        # 根据用户当前选择的模型偏好决定使用哪个模型
-        user_id_str = str(message.from_user.id)
-        if user_id_str not in default_model_dict:
-            default_model_dict[user_id_str] = False  # 默认使用 model_2
-        
-        # 选择当前模型
-        if default_model_dict[user_id_str]:
-            current_model_name = model_1
-        else:
-            current_model_name = model_2
-        
-        current_model_name_for_error_msg = current_model_name
-        
         # 尝试理解图片，处理API密钥额度用尽的情况
         max_retry_attempts = len(api_keys)
         retry_count = 0
@@ -580,6 +585,10 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
 
                 # 使用用户系统提示词
                 system_prompt = get_system_prompt(message.from_user.id)
+                
+                # 当前模型名称
+                current_model_name = model_1  # 默认使用model_1
+                current_model_name_for_error_msg = current_model_name
                 
                 # 创建内容结构
                 image_part = types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")

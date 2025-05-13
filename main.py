@@ -10,9 +10,51 @@ from gemini import user_language_dict, get_user_lang
 
 # Init args
 parser = argparse.ArgumentParser()
-parser.add_argument("tg_token", help="telegram token")
-parser.add_argument("GOOGLE_GEMINI_KEY", help="Google Gemini API key")
+parser.add_argument("tg_token", help="Telegram机器人令牌")
+parser.add_argument("--keys", nargs="+", help="一个或多个Google Gemini API密钥")
+parser.add_argument("--keys_file", help="包含API密钥的文件路径，每行一个密钥")
 options = parser.parse_args()
+
+# 确保sys.argv[2]包含所有API密钥，用逗号分隔
+import sys
+if len(sys.argv) > 2 and not sys.argv[2].startswith('--'):
+    # 如果用户直接在命令行中提供了第二个位置参数，我们保留它，假设它已经是正确格式的API密钥列表
+    pass
+elif options.keys or options.keys_file:
+    # 处理从命令行参数或文件中获取的API密钥
+    api_keys = []
+    
+    # 从--keys参数获取密钥
+    if options.keys:
+        for key in options.keys:
+            # 移除可能的逗号和空格
+            clean_key = key.strip().rstrip(",")
+            if clean_key:
+                api_keys.append(clean_key)
+    
+    # 从文件获取密钥
+    if options.keys_file:
+        try:
+            with open(options.keys_file, 'r') as f:
+                for line in f:
+                    # 移除可能的逗号、空格和换行符
+                    clean_key = line.strip().rstrip(",")
+                    if clean_key:
+                        api_keys.append(clean_key)
+        except Exception as e:
+            print(f"读取密钥文件时出错: {e}")
+    
+    # 将处理好的密钥列表添加到sys.argv
+    if api_keys:
+        if len(sys.argv) <= 2:
+            sys.argv.append(",".join(api_keys))
+        else:
+            sys.argv[2] = ",".join(api_keys)
+else:
+    # 如果没有提供任何密钥，确保有一个空的sys.argv[2]
+    if len(sys.argv) <= 2:
+        sys.argv.append("")
+
 print("Arg parse done.")
 
 
