@@ -38,7 +38,8 @@ async def main():
         telebot.types.BotCommand("api_add", "添加API密钥"),
         telebot.types.BotCommand("api_remove", "删除API密钥"),
         telebot.types.BotCommand("api_list", "查看API密钥列表"),
-        telebot.types.BotCommand("api_switch", "切换当前API密钥")
+        telebot.types.BotCommand("api_switch", "切换当前API密钥"),
+        telebot.types.BotCommand("refresh_menu", "刷新命令菜单")
     ]
     
     menu_en = [
@@ -58,7 +59,8 @@ async def main():
         telebot.types.BotCommand("api_add", "add API key"),
         telebot.types.BotCommand("api_remove", "remove API key"),
         telebot.types.BotCommand("api_list", "list all API keys"),
-        telebot.types.BotCommand("api_switch", "switch current API key")
+        telebot.types.BotCommand("api_switch", "switch current API key"),
+        telebot.types.BotCommand("refresh_menu", "refresh command menu")
     ]
     
     # 默认使用中文菜单
@@ -107,6 +109,7 @@ async def main():
     bot.register_message_handler(handlers.api_key_remove_handler,        commands=['api_remove'],    pass_bot=True)
     bot.register_message_handler(handlers.api_key_list_handler,          commands=['api_list'],      pass_bot=True)
     bot.register_message_handler(handlers.api_key_switch_handler,        commands=['api_switch'],    pass_bot=True)
+    bot.register_message_handler(refresh_commands,                       commands=['refresh_menu'],  pass_bot=True)
     bot.register_message_handler(handlers.gemini_photo_handler,          content_types=["photo"],    pass_bot=True)
     bot.register_message_handler(
         handlers.gemini_private_handler,
@@ -117,6 +120,26 @@ async def main():
     # Start bot
     print("Starting Gemini_Telegram_Bot.")
     await bot.polling(none_stop=True)
+
+async def refresh_commands(message: telebot.types.Message, bot: AsyncTeleBot) -> None:
+    """刷新机器人命令菜单"""
+    try:
+        # 获取用户当前语言
+        user_id_str = str(message.from_user.id)
+        current_lang = get_user_lang(user_id_str)
+        
+        # 创建用户专属菜单作用域
+        user_scope = telebot.types.BotCommandScopeChat(message.chat.id)
+        
+        # 根据语言设置菜单
+        if current_lang == "zh":
+            await bot.set_my_commands(menu_zh, scope=user_scope)
+            await bot.reply_to(message, "已刷新命令菜单（中文）")
+        else:
+            await bot.set_my_commands(menu_en, scope=user_scope)
+            await bot.reply_to(message, "Commands menu refreshed (English)")
+    except Exception as e:
+        await bot.reply_to(message, f"刷新菜单失败/Failed to refresh menu: {str(e)}")
 
 if __name__ == '__main__':
     asyncio.run(main())

@@ -41,7 +41,10 @@ search_tool = {'google_search': {}}
 # 初始化客户端
 client = None
 if api_keys:
-    client = genai.Client(api_key=api_keys[current_api_key_index])
+    try:
+        client = genai.Client(api_key=api_keys[current_api_key_index])
+    except Exception as e:
+        print(f"Error initializing client: {e}")
 
 # API KEY管理函数
 def get_current_api_key():
@@ -67,8 +70,12 @@ def switch_to_next_api_key():
         return False
     
     # 更新客户端
-    client = genai.Client(api_key=api_keys[current_api_key_index])
-    return True
+    try:
+        client = genai.Client(api_key=api_keys[current_api_key_index])
+        return True
+    except Exception as e:
+        print(f"Error switching to next API key: {e}")
+        return False
 
 def validate_api_key_format(key):
     """验证API密钥格式（简单检查）"""
@@ -290,7 +297,7 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
                 # 如果设置系统提示词失败，尝试创建没有系统提示词的聊天
                 chat = client.aio.chats.create(
                     model=model_type, 
-                    config={'tools': [search_tool]}
+                    config=types.GenerateContentConfig(tools=[search_tool])
                 )
                 chat_dict[str(message.from_user.id)] = chat
         else:
@@ -440,6 +447,9 @@ async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes)
             # 打开图像
             try:
                 image = Image.open(io.BytesIO(photo_file))
+                buffer = io.BytesIO()
+                image.save(buffer, format="JPEG")
+                image_bytes = buffer.getvalue()
             except Exception as img_error:
                 await bot.edit_message_text(
                     f"{error_info}\n图像处理错误: {str(img_error)}",
@@ -455,10 +465,14 @@ async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes)
             if lang == "zh" and "用中文回复" not in m and "中文回答" not in m and "in English" not in m.lower():
                 m += "，请用中文回复"
             
+            # 创建内容
+            text_part = types.Part.from_text(text=m)
+            image_part = types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
+            
             # 发送请求
             response = await client.aio.models.generate_content(
                 model=model_3,
-                contents=[m, image],
+                contents=[text_part, image_part],
                 config=types.GenerateContentConfig(**generation_config)
             )
             
@@ -557,40 +571,31 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
             try:
                 # Load image from bytes
                 image_obj = Image.open(io.BytesIO(photo_file))
+                buffer = io.BytesIO()
+                image_obj.save(buffer, format="JPEG")
+                image_bytes = buffer.getvalue()
 
                 # 使用用户系统提示词
                 system_prompt = get_system_prompt(message.from_user.id)
                 
-                # 创建模型
+                # 当前模型名称
                 current_model_name = model_1  # 默认使用model_1
                 current_model_name_for_error_msg = current_model_name
                 
-                # 创建模型实例
-                model = client.aio.genai_model(current_model_name)
+                # 创建内容结构
+                image_part = types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
+                text_part = types.Part.from_text(text=prompt)
                 
-                # 设置生成配置
-                gen_config = generation_config.copy()
-                
-                # 创建聊天
-                chat_session = await model.aio.start_chat(
-                    system_instruction=system_prompt,
-                    generation_config=gen_config, 
-                    safety_settings=safety_settings
+                # 使用新的API调用方式生成内容
+                response_stream = await client.aio.models.generate_content_stream(
+                    model=current_model_name,
+                    contents=[text_part, image_part],
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_prompt,
+                        **generation_config,
+                        safety_settings=safety_settings
+                    )
                 )
-                
-                # 准备消息内容
-                current_contents_for_chat = [
-                    {
-                        "role": "user",
-                        "parts": [
-                            {"text": prompt},
-                            {"inline_data": {"mime_type": "image/jpeg", "data": image_obj}}
-                        ]
-                    }
-                ]
-                
-                # Use `content` (singular) keyword for send_message_stream with a list of parts.
-                response_stream = await chat_session.send_message_stream(current_contents_for_chat)
                 
                 full_response = ""
                 last_update = time.time()
@@ -736,14 +741,12 @@ async def gemini_draw(bot:TeleBot, message:Message, m:str):
                 if lang == "zh" and "用中文回复" not in m and "中文回答" not in m and "in English" not in m.lower():
                     m += "，请用中文回复"
                 
-                # 使用绘图模型
-                model = client.aio.genai_model(model_3)
-                
-                # 设置绘图配置
-                gen_config = draw_generation_config.copy()
-                
-                # 发送绘图请求
-                response = await model.aio.generate_content(m, generation_config=gen_config)
+                # 使用新的API方式进行绘图
+                response = await client.aio.models.generate_content(
+                    model=model_3,
+                    contents=m,
+                    config=types.GenerateContentConfig(**draw_generation_config)
+                )
                 
                 # 检查响应
                 if not hasattr(response, 'candidates') or not response.candidates:
