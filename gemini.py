@@ -460,25 +460,42 @@ async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes)
             text_part = types.Part.from_text(text=m)
             image_part = types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
             
-            # 发送请求
+            # 发送请求 - 使用draw_generation_config代替generation_config
             response = await client.aio.models.generate_content(
                 model=model_3,
                 contents=[text_part, image_part],
-                config=types.GenerateContentConfig(**generation_config)
+                config=types.GenerateContentConfig(**draw_generation_config)  # 修改这里使用draw_generation_config
             )
             
             # 检查响应
-            if not hasattr(response, 'candidates') or not response.candidates or not hasattr(response.candidates[0], 'content'):
-                await safe_edit_message(bot, f"{error_info}\n无效的响应", sent_message.chat.id, sent_message.message_id)
+            if not hasattr(response, 'candidates') or not response.candidates:
+                await safe_edit_message(bot, f"{error_info}\nNo candidates generated", sent_message.chat.id, sent_message.message_id)
                 return
             
-            # 处理响应
-            for part in response.candidates[0].content.parts:
-                if hasattr(part, 'text') and part.text is not None:
-                    await bot.send_message(message.chat.id, escape(part.text), parse_mode="MarkdownV2")
-                elif hasattr(part, 'inline_data') and part.inline_data is not None:
-                    photo = part.inline_data.data
-                    await bot.send_photo(message.chat.id, photo)
+            # 获取文本和图片
+            text = ""
+            img = None
+            candidate = response.candidates[0]
+            
+            if hasattr(candidate, 'content') and candidate.content:
+                for part in candidate.content.parts:
+                    if hasattr(part, 'text') and part.text:
+                        text += part.text
+                    if hasattr(part, 'inline_data') and part.inline_data:
+                        img = part.inline_data.data
+            
+            # 先发送图片(如果有)
+            if img:
+                with io.BytesIO(img) as bio:
+                    await bot.send_photo(message.chat.id, bio)
+            
+            # 然后发送文本(如果有)
+            if text:
+                if len(text) > 4000:
+                    await bot.send_message(message.chat.id, escape(text[:4000]), parse_mode="MarkdownV2")
+                    await bot.send_message(message.chat.id, escape(text[4000:]), parse_mode="MarkdownV2")
+                else:
+                    await bot.send_message(message.chat.id, escape(text), parse_mode="MarkdownV2")
             
             # 删除"正在加载"消息
             await bot.delete_message(chat_id=sent_message.chat.id, message_id=sent_message.message_id)
