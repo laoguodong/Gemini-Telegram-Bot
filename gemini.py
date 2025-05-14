@@ -584,6 +584,7 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
                     current_model_name = model_2
                 
                 current_model_name_for_error_msg = current_model_name
+
                 
                 # 创建内容结构
                 image_part = types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
