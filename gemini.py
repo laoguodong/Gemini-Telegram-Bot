@@ -532,7 +532,6 @@ async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes)
 
 async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: bytes, prompt: str = ""):
     sent_message = None
-    current_model_name_for_error_msg = "configured model" # Placeholder for error messages
     try:
         # 检查client是否已初始化
         if client is None:
@@ -561,73 +560,153 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
         
         while retry_count < max_retry_attempts:
             try:
+                # 获取用户的对话历史字典和模型名称 (确保格式一致)
+                user_id = str(message.from_user.id)
+                is_model_1_default = default_model_dict.get(user_id, True)  # 默认使用 model_1
+                active_chat_dict = gemini_chat_dict if is_model_1_default else gemini_pro_chat_dict
+                current_model_name = model_1 if is_model_1_default else model_2
+                
+                # 调试日志
+                print(f"用户 {user_id} 使用模型 {current_model_name}, " + 
+                     f"已有会话: {user_id in active_chat_dict}")
+                
                 # Load image from bytes
                 image_obj = Image.open(io.BytesIO(photo_file))
                 buffer = io.BytesIO()
                 image_obj.save(buffer, format="JPEG")
                 image_bytes = buffer.getvalue()
 
-                # 使用用户系统提示词
+                # 系统提示词只应在创建新会话时使用
                 system_prompt = get_system_prompt(message.from_user.id)
                 
-                # 确定要使用的模型，根据用户通过 /switch 命令的选择
-                user_id_str = str(message.from_user.id)
-                selected_model_is_model_1 = True  # 默认情况下使用 model_1
-
-                if user_id_str in default_model_dict:
-                    selected_model_is_model_1 = default_model_dict[user_id_str] # True 表示 model_1, False 表示 model_2
-                # else: 如果用户未曾使用 /switch，则维持默认使用 model_1
-
-                if selected_model_is_model_1:
-                    current_model_name = model_1
-                else:
-                    current_model_name = model_2
-                
-                current_model_name_for_error_msg = current_model_name
-
-                
-                # 创建内容结构
+                # 准备多模态输入内容
                 image_part = types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
                 text_part = types.Part.from_text(text=prompt)
                 
-                # 使用新的API调用方式生成内容
-                response_stream = await client.aio.models.generate_content_stream(
-                    model=current_model_name,
-                    contents=[text_part, image_part],
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_prompt,
-                        **generation_config
-                    )
-                )
+                # 确保聊天会话管理与 gemini_stream 函数保持一致
+                # 1. 检查用户是否已有聊天会话，如果没有则创建
+                # 注意：创建时应用系统提示词，但已有会话时不再设置系统提示词
+                if user_id not in active_chat_dict:
+                    print(f"为用户 {user_id} 创建新会话，模型：{current_model_name}")
+                    try:
+                        # 只在创建新会话时应用系统提示词
+                        chat = client.aio.chats.create(
+                            model=current_model_name,
+                            config=types.GenerateContentConfig(
+                                system_instruction=system_prompt,
+                                tools=[search_tool]
+                            )
+                        )
+                        active_chat_dict[user_id] = chat
+                    except Exception as e:
+                        print(f"创建带系统提示词的会话失败: {e}")
+                        chat = client.aio.chats.create(
+                            model=current_model_name,
+                            config=types.GenerateContentConfig(tools=[search_tool])
+                        )
+                        active_chat_dict[user_id] = chat
+                else:
+                    # 使用现有会话，不再设置系统提示词
+                    print(f"用户 {user_id} 使用现有会话")
+                    chat = active_chat_dict[user_id]
                 
-                full_response = ""
-                last_update = time.time()
-                update_interval = conf["streaming_update_interval"]
-                
-                async for chunk in response_stream:
-                    if hasattr(chunk, 'text') and chunk.text:
-                        full_response += chunk.text
-                        current_time = time.time()
-                    
-                        if current_time - last_update >= update_interval:
-                            try:
-                                await safe_edit_message(bot, escape(full_response), sent_message.chat.id, sent_message.message_id, "MarkdownV2")
-                            except Exception as e_stream:
-                                if "parse markdown" in str(e_stream).lower():
-                                    await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
-                                elif "message is not modified" not in str(e_stream).lower():
-                                    print(f"Streaming update error for image understanding: {e_stream}")
-                            
-                            last_update = current_time
-                
-                # Final update - try with markdown first, fall back to plain text
+                # 2. 使用聊天会话发送包含图片的消息（保持上下文）
+                # 使用模型直接生成内容，避免重复系统提示词的影响
                 try:
-                    await safe_edit_message(bot, escape(full_response), sent_message.chat.id, sent_message.message_id, "MarkdownV2")
-                except Exception: # Fallback to sending raw text if markdown parsing fails on the final message
-                    await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
+                    # 使用聊天会话发送多模态内容
+                    parts = [text_part, image_part]
+                    print(f"尝试通过聊天会话发送图片消息")
+                    response_stream = await chat.send_message_stream(parts)
+                    
+                    full_response = ""
+                    last_update = time.time()
+                    update_interval = conf["streaming_update_interval"]
+                    
+                    async for chunk in response_stream:
+                        if hasattr(chunk, 'text') and chunk.text:
+                            full_response += chunk.text
+                            current_time = time.time()
+                        
+                            if current_time - last_update >= update_interval:
+                                try:
+                                    await safe_edit_message(bot, escape(full_response), sent_message.chat.id, sent_message.message_id, "MarkdownV2")
+                                except Exception as e_stream:
+                                    if "parse markdown" in str(e_stream).lower():
+                                        await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
+                                    elif "message is not modified" not in str(e_stream).lower():
+                                        print(f"图片理解流更新错误: {e_stream}")
+                                
+                                last_update = current_time
+                    
+                    # Final update - try with markdown first, fall back to plain text
+                    try:
+                        await safe_edit_message(bot, escape(full_response), sent_message.chat.id, sent_message.message_id, "MarkdownV2")
+                    except Exception: # Fallback to sending raw text if markdown parsing fails on the final message
+                        await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
+                    
+                    print(f"图片处理成功，使用聊天会话方法")
+                    # 成功处理图片，跳出循环
+                    break
                 
-                # 成功处理图片，跳出循环
-                break
+                except Exception as chat_error:
+                    print(f"通过聊天会话发送图片失败: {chat_error}")
+                    print(f"回退到直接调用模型方法")
+                    
+                    # 失败后回退到直接调用模型的方法
+                    response_stream = await client.aio.models.generate_content_stream(
+                        model=current_model_name,
+                        contents=[text_part, image_part],
+                        config=types.GenerateContentConfig(
+                            system_instruction=system_prompt,
+                            **generation_config
+                        )
+                    )
+                    
+                    full_response = ""
+                    last_update = time.time()
+                    update_interval = conf["streaming_update_interval"]
+                    
+                    async for chunk in response_stream:
+                        if hasattr(chunk, 'text') and chunk.text:
+                            full_response += chunk.text
+                            current_time = time.time()
+                        
+                            if current_time - last_update >= update_interval:
+                                try:
+                                    await safe_edit_message(bot, escape(full_response), sent_message.chat.id, sent_message.message_id, "MarkdownV2")
+                                except Exception as e_stream:
+                                    if "parse markdown" in str(e_stream).lower():
+                                        await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
+                                    elif "message is not modified" not in str(e_stream).lower():
+                                        print(f"图片理解流更新错误: {e_stream}")
+                                
+                                last_update = current_time
+                    
+                    # Final update - try with markdown first, fall back to plain text
+                    try:
+                        await safe_edit_message(bot, escape(full_response), sent_message.chat.id, sent_message.message_id, "MarkdownV2")
+                    except Exception: # Fallback to sending raw text if markdown parsing fails on the final message
+                        await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
+                    
+                    # 在这种情况下手动添加图片和模型回复到聊天历史中
+                    try:
+                        print(f"手动更新聊天历史")
+                        # 创建一个新的聊天会话并手动设置历史记录
+                        user_content = types.Content.from_parts([text_part, image_part], role="user")
+                        model_content = types.Content.from_parts([types.Part.from_text(full_response)], role="model")
+                        
+                        if not hasattr(chat, 'history'):
+                            print(f"chat对象没有history属性，创建一个空列表")
+                            chat.history = []
+                        
+                        chat.history.append(user_content)
+                        chat.history.append(model_content)
+                        print(f"聊天历史更新成功")
+                    except Exception as history_error:
+                        print(f"手动更新聊天历史失败: {history_error}")
+                    
+                    # 成功处理图片，跳出循环
+                    break
             
             except Exception as e:
                 error_str = str(e)
@@ -663,7 +742,7 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
                             error_message = (
                             f"{get_user_text(message.from_user.id, 'error_info')}\n"
                             f"API错误: {error_detail_str}\n"
-                            f"此错误表明模型 '{current_model_name_for_error_msg}'（如在config.py中配置的）"
+                            f"此错误表明模型 '{current_model_name}'（如在config.py中配置的）"
                             f"只支持文本输出，但正在尝试生成多模态内容。\n"
                             f"请检查config.py中的模型配置。"
                             )
@@ -671,7 +750,7 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
                             error_message = (
                             f"{get_user_text(message.from_user.id, 'error_info')}\n"
                             f"API Error: {error_detail_str}\n"
-                            f"This error suggests that the model '{current_model_name_for_error_msg}' (as configured in your config.py) "
+                            f"This error suggests that the model '{current_model_name}' (as configured in your config.py) "
                             f"only supports text output, but is being asked to generate multimodal content.\n"
                             f"Please check your model configuration in config.py."
                             )
