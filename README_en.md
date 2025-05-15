@@ -1,65 +1,107 @@
-# Gemini_Telegram_Bot
-A Telegram Bot using Gemini API
-# Demo
-[Click here](https://t.me/gemini_telegram_demo_bot)
+# Gemini-Telegram-Bot
 
-# How to Install
-## (1) On Linux
+A powerful Telegram bot based on Google Gemini AI, supporting multiple languages, models, image understanding, and generation.
+
+[中文文档](https://github.com/laoguodong/Gemini-Telegram-Bot/blob/main/README.md)
+
+## ✨ Key Features
+
+- 💬 **Intelligent Conversation**: Support natural, coherent multi-turn dialogues with Gemini models
+- 🌐 **Multi-language Support**: Built-in Chinese and English interfaces, easily switchable
+- 🔄 **Multi-model Switching**: Freedom to switch between different Gemini models
+- 📸 **Image Understanding**: Ability to recognize and analyze content in uploaded images
+- 🎨 **AI Drawing**: Generate images from text descriptions
+- ✏️ **Image Editing**: Support AI-assisted editing of uploaded images
+- 🔑 **Multiple API Key Management**: Add, remove, and switch between multiple Gemini API keys
+- 📝 **Custom System Prompts**: Set, modify, and manage system prompts
+
+## 🚀 Installation Methods
+
+### Method 1: Direct Installation on Linux
+
 1. Install dependencies
-```
-pip install -r requirements.txt
-```
-2. Obtain Telegram Bot API at [BotFather](https://t.me/BotFather)
-3. Get Gemini API keys from [Google AI Studio](https://makersuite.google.com/app/apikey)
-4. To run the bot, execute:
-```
-python main.py ${Telegram Bot API} ${Gemini API keys}
-```
-## (2)Deploy Using Docker
-### Use the built image(x86 only)
-```
-docker run -d --restart=always -e TELEGRAM_BOT_API_KEY={Telegram Bot API} -e GEMINI_API_KEYS={Gemini API Key} qwqhthqwq/gemini-telegram-bot:main
-```
-### build by yourself
-1. Get Telegram Bot API at [BotFather](https://t.me/BotFather)
-2. Get Gemini API keys on [Google AI Studio](https://makersuite.google.com/app/apikey)
-3. Clone repository
-```
-git clone https://github.com/H-T-H/Gemini-Telegram-Bot.git
-```
-4. Enter repository directory.
-```
-cd Gemini-Telegram-Bot
-```
-5. Build images
-```
-docker build -t gemini_tg_bot .
-```
-6. run
-```
-docker run -d --restart=always -e TELEGRAM_BOT_API_KEY={Telegram Bot API} -e GEMINI_API_KEYS={Gemini API Key} gemini_tg_bot
-```
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-## (3)Deploy on Railway
-Click on the button below for a one-click deployment.
+2. Obtain Telegram Bot API key from [BotFather](https://t.me/BotFather)
 
-[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template/HIsbMv?referralCode=4LyW6R)
+3. Get Gemini API key from [Google AI Studio](https://makersuite.google.com/app/apikey)
 
-## (4)Deploy on Zeabur
-Click on the button below for a one-click deployment.
+4. Run the bot
+   ```bash
+   python main.py ${Telegram_Bot_API} ${Gemini_API_Key}
+   ```
 
-[![Deploy on Zeabur](https://zeabur.com/button.svg)](https://zeabur.com/templates/V2870T)
+### Method 2: Deploy Using Docker
 
+1. Clone the repository
+   ```bash
+   git clone https://github.com/laoguodong/Gemini-Telegram-Bot.git
+   ```
 
-# How to Use
-1. Send your questions directly in a private chat.
-2.  In a group chat, use **/gemini** or /gemini\_pro + your question. Multi-turn conversations are supported.
-3. You can use the **/clear** command to delete the current conversation history.
-4. You can use the **/switch** command to switch the model.
-5. To generate images, use **/draw** + the image you want. Multi-turn conversations are supported.
-6. To edit images, use **/edit** + the image you upload + the edits you want to make.
+2. Navigate to the project directory
+   ```bash
+   cd Gemini-Telegram-Bot
+   ```
 
+3. Build Docker image
+   ```bash
+   docker build -t gemini_tg_bot .
+   ```
 
-# Reference
-1. [https://github.com/yihong0618/tg_bot_collections](https://github.com/yihong0618/tg_bot_collections)
-2. [https://github.com/yym68686/md2tgmd](https://github.com/yym68686/md2tgmd)
+4. Run container
+   ```bash
+   docker run -d --restart=always -e TELEGRAM_BOT_API_KEY={Telegram_Bot_API} -e GEMINI_API_KEYS={Gemini_API_Key} gemini_tg_bot
+   ```
+
+### Method 3: One-Click Deploy on Railway
+
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/template/ya_ZL5?referralCode=HPHyYT)
+
+## 📖 User Guide
+
+### Basic Commands
+
+- `/start` - Start using the bot
+- `/gemini` - Use Gemini model
+- `/gemini_pro` - Use Gemini Pro model
+- `/draw` - AI drawing functionality
+- `/edit` - Image editing functionality
+- `/clear` - Clear current conversation history
+- `/switch` - Switch default model
+- `/lang` - Switch language (Chinese/English)
+- `/language` - Display current language setting
+
+### System Prompt Management
+
+- `/system` - Set system prompt
+- `/system_clear` - Delete system prompt
+- `/system_reset` - Reset system prompt to default
+- `/system_show` - Show current system prompt
+
+### API Key Management
+
+- `/api_add` - Add new API key
+- `/api_remove` - Remove existing API key
+- `/api_list` - View all API keys
+- `/api_switch` - Switch current API key
+
+### Usage Scenarios
+
+1. **Private Chat Mode**: Directly send text or images for conversation
+2. **Group Chat Mode**: Use `/gemini` or `/gemini_pro` commands plus your question
+3. **Image Processing**:
+   - Send an image for AI to recognize content
+   - Use `/edit` + image + description for image editing
+   - Use `/draw` + description to generate AI images
+
+## 📋 Important Notes
+
+- Some features (such as API key management) are only available in private chat mode
+- Ensure API key format is correct for proper functionality
+- System prompts affect AI response style and can be customized as needed
+
+## ⭐ Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=laoguodong/Gemini-Telegram-Bot&type=Date)](https://star-history.com/#laoguodong/Gemini-Telegram-Bot&Date)
