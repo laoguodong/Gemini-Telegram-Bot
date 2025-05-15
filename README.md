@@ -17,23 +17,11 @@
 
 ## 🚀 安装方法
 
-### 方法一：直接在Linux系统上安装
+### 方法一（Railway一键部署）
 
-1. 安装依赖
-   ```bash
-   pip install -r requirements.txt
-   ```
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/template/ya_ZL5?referralCode=HPHyYT)
 
-2. 在[BotFather](https://t.me/BotFather)获取Telegram Bot API密钥
-
-3. 在[Google AI Studio](https://makersuite.google.com/app/apikey)获取Gemini API密钥
-
-4. 运行机器人
-   ```bash
-   python main.py ${Telegram机器人API} ${Gemini API密钥}
-   ```
-
-### 方法二：使用Docker部署
+### 方法二（Docker部署）
 
 1. 克隆项目
    ```bash
@@ -55,9 +43,21 @@
    docker run -d --restart=always -e TELEGRAM_BOT_API_KEY={Telegram机器人API} -e GEMINI_API_KEYS={Gemini API密钥} gemini_tg_bot
    ```
 
-### 方法三：使用Railway一键部署
+### 方法三（Linux系统安装）
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/template/ya_ZL5?referralCode=HPHyYT)
+1. 安装依赖
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. 在[BotFather](https://t.me/BotFather)获取Telegram Bot API密钥
+
+3. 在[Google AI Studio](https://makersuite.google.com/app/apikey)获取Gemini API密钥
+
+4. 运行机器人
+   ```bash
+   python main.py ${Telegram机器人API} ${Gemini API密钥}
+   ```
 
 ## 📖 使用指南
 

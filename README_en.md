@@ -17,23 +17,11 @@ A powerful Telegram bot based on Google Gemini AI, supporting multiple languages
 
 ## 🚀 Installation Methods
 
-### Method 1: Direct Installation on Linux
+### Method 1 (Railway One-Click Deploy)
 
-1. Install dependencies
-   ```bash
-   pip install -r requirements.txt
-   ```
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/template/ya_ZL5?referralCode=HPHyYT)
 
-2. Obtain Telegram Bot API key from [BotFather](https://t.me/BotFather)
-
-3. Get Gemini API key from [Google AI Studio](https://makersuite.google.com/app/apikey)
-
-4. Run the bot
-   ```bash
-   python main.py ${Telegram_Bot_API} ${Gemini_API_Key}
-   ```
-
-### Method 2: Deploy Using Docker
+### Method 2 (Docker Deployment)
 
 1. Clone the repository
    ```bash
@@ -55,9 +43,21 @@ A powerful Telegram bot based on Google Gemini AI, supporting multiple languages
    docker run -d --restart=always -e TELEGRAM_BOT_API_KEY={Telegram_Bot_API} -e GEMINI_API_KEYS={Gemini_API_Key} gemini_tg_bot
    ```
 
-### Method 3: One-Click Deploy on Railway
+### Method 3 (Linux Installation)
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/template/ya_ZL5?referralCode=HPHyYT)
+1. Install dependencies
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. Obtain Telegram Bot API key from [BotFather](https://t.me/BotFather)
+
+3. Get Gemini API key from [Google AI Studio](https://makersuite.google.com/app/apikey)
+
+4. Run the bot
+   ```bash
+   python main.py ${Telegram_Bot_API} ${Gemini_API_Key}
+   ```
 
 ## 📖 User Guide
 
