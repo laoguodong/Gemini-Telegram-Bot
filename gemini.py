@@ -452,9 +452,7 @@ async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes)
             # 获取用户语言
             lang = get_user_lang(message.from_user.id)
             
-            # 如果是中文用户且提示中没有指定语言，确保添加"用中文回复"
-            if lang == "zh" and "用中文回复" not in m and "中文回答" not in m and "in English" not in m.lower():
-                m += "，请用中文回复"
+            
             
             # 创建内容
             text_part = types.Part.from_text(text=m)
@@ -789,9 +787,7 @@ async def gemini_draw(bot:TeleBot, message:Message, m:str):
                 # 获取用户语言
                 lang = get_user_lang(message.from_user.id)
                 
-                # 如果是中文用户且提示中没有指定语言，确保添加"用中文回复"
-                if lang == "zh" and "用中文回复" not in m and "中文回答" not in m and "in English" not in m.lower():
-                    m += "，请用中文回复"
+                
                 
                 # 使用新的API方式进行绘图
                 response = await client.aio.models.generate_content(

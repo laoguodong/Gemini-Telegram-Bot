@@ -1,130 +1,146 @@
 import argparse
-import traceback
 import asyncio
-import re
 import telebot
 from telebot.async_telebot import AsyncTeleBot
 import handlers
-from config import conf, generation_config, safety_settings, lang_settings
-from gemini import user_language_dict, get_user_lang
+from handlers import is_admin, load_authorized_users
+import config
 import sys
 import os
+import json
 
-# 恢复原始的参数解析方式
-parser = argparse.ArgumentParser()
-parser.add_argument("tg_token", help="Telegram token")
-parser.add_argument("GOOGLE_GEMINI_KEY", help="Google Gemini API key")
+# --- Argument Parsing ---
+parser = argparse.ArgumentParser(description="Gemini Telegram Bot")
+parser.add_argument("tg_token", help="Telegram Bot token")
+parser.add_argument("gemini_key", help="Google Gemini API key")
+parser.add_argument("--admin-uid", type=int, nargs='+', required=True, help="Space-separated list of administrator User IDs")
+
 options = parser.parse_args()
 
-# 处理API密钥中可能的中文逗号
-if options.GOOGLE_GEMINI_KEY:
-    options.GOOGLE_GEMINI_KEY = options.GOOGLE_GEMINI_KEY.replace('，', ',')
-    # 确保sys.argv[2]包含处理后的密钥，以便gemini.py能正确读取
+# --- Initialization ---
+
+# Set admin UIDs from command line arguments
+config.ADMIN_UID = options.admin_uid
+
+# Pass Gemini API key to the gemini module
+if options.gemini_key:
+    # This part is tricky as gemini.py reads from sys.argv. 
+    # A better approach would be to refactor gemini.py to accept the key directly.
+    # For now, we will modify sys.argv as the original code did.
     if len(sys.argv) > 2:
-        sys.argv[2] = options.GOOGLE_GEMINI_KEY
+        sys.argv[2] = options.gemini_key
 
 print("Arg parse done.")
 
+def initialize_users():
+    """Initializes the user data file, adding admins if the file is new."""
+    if not os.path.exists(config.USER_DATA_FILE):
+        print(f"User file {config.USER_DATA_FILE} not found, creating...")
+        with open(config.USER_DATA_FILE, 'w') as f:
+            json.dump(list(config.ADMIN_UID), f, indent=4)
+        print(f"Administrators {config.ADMIN_UID} have been added to the authorized list.")
+
+initialize_users()
+
+bot = AsyncTeleBot(options.tg_token)
+
+# --- Handler Registrations (using decorators) ---
+
+@bot.message_handler(commands=['start'])
+async def start(message):
+    await handlers.start(message, bot)
+
+@bot.message_handler(commands=['gemini'])
+async def gemini_stream_handler(message):
+    await handlers.gemini_stream_handler(message, bot)
+
+@bot.message_handler(commands=['gemini_pro'])
+async def gemini_pro_stream_handler(message):
+    await handlers.gemini_pro_stream_handler(message, bot)
+
+@bot.message_handler(commands=['draw'])
+async def draw_handler(message):
+    await handlers.draw_handler(message, bot)
+
+@bot.message_handler(commands=['edit'])
+async def edit_handler(message):
+    await handlers.gemini_edit_handler(message, bot)
+
+@bot.message_handler(commands=['clear'])
+async def clear(message):
+    await handlers.clear(message, bot)
+
+@bot.message_handler(commands=['switch'])
+async def switch(message):
+    await handlers.switch(message, bot)
+
+@bot.message_handler(commands=['lang'])
+async def lang_switch(message):
+    await handlers.language_switch_handler(message, bot)
+
+@bot.message_handler(commands=['language'])
+async def lang_status(message):
+    await handlers.language_status_handler(message, bot)
+
+# Admin commands
+@bot.message_handler(commands=['adduser'])
+async def add_user(message):
+    await handlers.add_user(message, bot)
+
+@bot.message_handler(commands=['deluser'])
+async def del_user(message):
+    await handlers.del_user(message, bot)
+
+@bot.message_handler(commands=['listusers'])
+async def list_users(message):
+    await handlers.list_users(message, bot)
+
+@bot.message_handler(commands=['api_add'])
+async def api_add(message):
+    await handlers.api_key_add_handler(message, bot)
+
+@bot.message_handler(commands=['api_remove'])
+async def api_remove(message):
+    await handlers.api_key_remove_handler(message, bot)
+
+@bot.message_handler(commands=['api_list'])
+async def api_list(message):
+    await handlers.api_key_list_handler(message, bot)
+
+@bot.message_handler(commands=['api_switch'])
+async def api_switch(message):
+    await handlers.api_key_switch_handler(message, bot)
+
+# Content handlers
+@bot.message_handler(content_types=['photo'])
+async def photo_handler(message):
+    await handlers.gemini_photo_handler(message, bot)
+
+@bot.message_handler(func=lambda message: message.chat.type == "private", content_types=['text'])
+async def private_text_handler(message):
+    await handlers.gemini_private_handler(message, bot)
 
 async def main():
-    # Init bot
-    bot = AsyncTeleBot(options.tg_token)
-    
-    # 定义中英文菜单
-    menu_zh = [
-        telebot.types.BotCommand("start", "开始使用"),
-        telebot.types.BotCommand("gemini", f"使用 {conf['model_1']}"),
-        telebot.types.BotCommand("gemini_pro", f"使用 {conf['model_2']}"),
-        telebot.types.BotCommand("draw", "绘图"),
-        telebot.types.BotCommand("edit", "编辑图片"),
-        telebot.types.BotCommand("clear", "清除历史记录"),
-        telebot.types.BotCommand("switch", "切换默认模型"),
-        telebot.types.BotCommand("lang", "切换语言 (中/英)"),
-        telebot.types.BotCommand("language", "显示当前语言"),
-        telebot.types.BotCommand("system", "设置系统提示词"),
-        telebot.types.BotCommand("system_clear", "删除系统提示词"),
-        telebot.types.BotCommand("system_reset", "重置系统提示词"),
-        telebot.types.BotCommand("system_show", "显示当前系统提示词"),
-        telebot.types.BotCommand("api_add", "添加API密钥"),
-        telebot.types.BotCommand("api_remove", "删除API密钥"),
-        telebot.types.BotCommand("api_list", "查看API密钥列表"),
-        telebot.types.BotCommand("api_switch", "切换当前API密钥")
-    ]
-    
-    menu_en = [
-        telebot.types.BotCommand("start", "Start"),
-        telebot.types.BotCommand("gemini", f"using {conf['model_1']}"),
-        telebot.types.BotCommand("gemini_pro", f"using {conf['model_2']}"),
-        telebot.types.BotCommand("draw", "draw picture"),
-        telebot.types.BotCommand("edit", "edit photo"),
-        telebot.types.BotCommand("clear", "Clear all history"),
-        telebot.types.BotCommand("switch", "switch default model"),
-        telebot.types.BotCommand("lang", "switch language (中/英)"),
-        telebot.types.BotCommand("language", "show current language"),
-        telebot.types.BotCommand("system", "set system prompt"),
-        telebot.types.BotCommand("system_clear", "delete system prompt"),
-        telebot.types.BotCommand("system_reset", "reset system prompt"),
-        telebot.types.BotCommand("system_show", "show current system prompt"),
-        telebot.types.BotCommand("api_add", "add API key"),
-        telebot.types.BotCommand("api_remove", "remove API key"),
-        telebot.types.BotCommand("api_list", "list all API keys"),
-        telebot.types.BotCommand("api_switch", "switch current API key")
-    ]
-    
-    # 默认使用中文菜单
-    await bot.delete_my_commands(scope=None, language_code=None)
-    await bot.set_my_commands(menu_zh)
+    # Set commands for each user based on their role
+    authorized_users = load_authorized_users()
+    for user_id in authorized_users:
+        try:
+            if is_admin(user_id):
+                # Set admin menu
+                await bot.set_my_commands(handlers.admin_menu_zh, scope=telebot.types.BotCommandScopeChat(user_id), language_code='zh')
+                await bot.set_my_commands(handlers.admin_menu_en, scope=telebot.types.BotCommandScopeChat(user_id), language_code='en')
+            else:
+                # Set user menu
+                await bot.set_my_commands(handlers.user_menu_zh, scope=telebot.types.BotCommandScopeChat(user_id), language_code='zh')
+                await bot.set_my_commands(handlers.user_menu_en, scope=telebot.types.BotCommandScopeChat(user_id), language_code='en')
+        except Exception as e:
+            print(f"Failed to set commands for user {user_id}: {e}")
+
+    # Set a default menu for users who are not yet authorized
+    await bot.set_my_commands(handlers.user_menu_zh, scope=telebot.types.BotCommandScopeDefault(), language_code='zh')
+    await bot.set_my_commands(handlers.user_menu_en, scope=telebot.types.BotCommandScopeDefault(), language_code='en')
+
     print("Bot init done.")
-
-    # 语言切换后更新菜单的处理函数
-    async def on_lang_changed(message, new_lang):
-        user_scope = telebot.types.BotCommandScopeChat(message.chat.id)
-        if new_lang == "zh":
-            await bot.set_my_commands(menu_zh, scope=user_scope)
-        else:
-            await bot.set_my_commands(menu_en, scope=user_scope)
-    
-    # 修改语言切换处理函数，加入菜单切换
-    async def language_switch_handler_with_menu(message: telebot.types.Message, bot: AsyncTeleBot) -> None:
-        user_id_str = str(message.from_user.id)
-        current_lang = get_user_lang(user_id_str)
-        
-        # 切换语言
-        new_lang = "en" if current_lang == "zh" else "zh"
-        user_language_dict[user_id_str] = new_lang
-        
-        # 更新菜单
-        await on_lang_changed(message, new_lang)
-        
-        # 发送语言切换确认消息
-        await bot.reply_to(message, lang_settings[new_lang]["language_switched"])
-
-    # Init commands
-    bot.register_message_handler(handlers.start,                         commands=['start'],         pass_bot=True)
-    bot.register_message_handler(handlers.gemini_stream_handler,         commands=['gemini'],        pass_bot=True)
-    bot.register_message_handler(handlers.gemini_pro_stream_handler,     commands=['gemini_pro'],    pass_bot=True)
-    bot.register_message_handler(handlers.draw_handler,                  commands=['draw'],          pass_bot=True)
-    bot.register_message_handler(handlers.gemini_edit_handler,           commands=['edit'],          pass_bot=True)
-    bot.register_message_handler(handlers.clear,                         commands=['clear'],         pass_bot=True)
-    bot.register_message_handler(handlers.switch,                        commands=['switch'],        pass_bot=True)
-    bot.register_message_handler(language_switch_handler_with_menu,      commands=['lang'],          pass_bot=True)
-    bot.register_message_handler(handlers.language_status_handler,       commands=['language'],      pass_bot=True)
-    bot.register_message_handler(handlers.system_prompt_handler,         commands=['system'],        pass_bot=True)
-    bot.register_message_handler(handlers.system_prompt_clear_handler,   commands=['system_clear'],  pass_bot=True)
-    bot.register_message_handler(handlers.system_prompt_reset_handler,   commands=['system_reset'],  pass_bot=True)
-    bot.register_message_handler(handlers.system_prompt_show_handler,    commands=['system_show'],   pass_bot=True)
-    bot.register_message_handler(handlers.api_key_add_handler,           commands=['api_add'],       pass_bot=True)
-    bot.register_message_handler(handlers.api_key_remove_handler,        commands=['api_remove'],    pass_bot=True)
-    bot.register_message_handler(handlers.api_key_list_handler,          commands=['api_list'],      pass_bot=True)
-    bot.register_message_handler(handlers.api_key_switch_handler,        commands=['api_switch'],    pass_bot=True)
-    bot.register_message_handler(handlers.gemini_photo_handler,          content_types=["photo"],    pass_bot=True)
-    bot.register_message_handler(
-        handlers.gemini_private_handler,
-        func=lambda message: message.chat.type == "private",
-        content_types=['text'],
-        pass_bot=True)
-
-    # Start bot
     print("Starting Gemini_Telegram_Bot.")
     await bot.polling(none_stop=True)
 
