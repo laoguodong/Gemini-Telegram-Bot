@@ -20,8 +20,8 @@ from gemini import (
 
 admin_menu_zh = [
     BotCommand("start", "开始"),
-    BotCommand("gemini", f"模型 {conf['model_1']}"),
-    BotCommand("gemini_pro", f"模型 {conf['model_2']}"),
+    BotCommand("gemini", f"模型 {conf['model_2']}"),
+    BotCommand("gemini_pro", f"模型 {conf['model_1']}"),
     BotCommand("draw", "绘图"),
     BotCommand("clear", "清除会话"),
     BotCommand("switch", "切换模型"),
@@ -38,8 +38,8 @@ admin_menu_zh = [
 
 user_menu_zh = [
     BotCommand("start", "开始"),
-    BotCommand("gemini", f"模型 {conf['model_1']}"),
-    BotCommand("gemini_pro", f"模型 {conf['model_2']}"),
+    BotCommand("gemini", f"模型 {conf['model_2']}"),
+    BotCommand("gemini_pro", f"模型 {conf['model_1']}"),
     BotCommand("draw", "绘图"),
     BotCommand("clear", "清除会话"),
     BotCommand("switch", "切换模型"),
@@ -48,8 +48,8 @@ user_menu_zh = [
 
 admin_menu_en = [
     BotCommand("start", "Start"),
-    BotCommand("gemini", f"Model {conf['model_1']}"),
-    BotCommand("gemini_pro", f"Model {conf['model_2']}"),
+    BotCommand("gemini", f"Model {conf['model_2']}"),
+    BotCommand("gemini_pro", f"Model {conf['model_1']}"),
     BotCommand("draw", "Draw"),
     BotCommand("clear", "Clear Chat"),
     BotCommand("switch", "Switch Model"),
@@ -66,8 +66,8 @@ admin_menu_en = [
 
 user_menu_en = [
     BotCommand("start", "Start"),
-    BotCommand("gemini", f"Model {conf['model_1']}"),
-    BotCommand("gemini_pro", f"Model {conf['model_2']}"),
+    BotCommand("gemini", f"Model {conf['model_2']}"),
+    BotCommand("gemini_pro", f"Model {conf['model_1']}"),
     BotCommand("draw", "Draw"),
     BotCommand("clear", "Clear Chat"),
     BotCommand("switch", "Switch Model"),
@@ -147,7 +147,7 @@ async def gemini_stream_handler(message: Message, bot: TeleBot) -> None:
         help_msg = get_user_text(message.from_user.id, "gemini_prompt_help")
         await bot.reply_to(message, escape(help_msg), parse_mode="MarkdownV2")
         return
-    await gemini.gemini_stream(bot, message, m, conf['model_1'])
+    await gemini.gemini_stream(bot, message, m, conf['model_2'])
 
 @authorized_user_only
 async def gemini_pro_stream_handler(message: Message, bot: TeleBot) -> None:
@@ -157,7 +157,7 @@ async def gemini_pro_stream_handler(message: Message, bot: TeleBot) -> None:
         help_msg = get_user_text(message.from_user.id, "gemini_pro_prompt_help")
         await bot.reply_to(message, escape(help_msg), parse_mode="MarkdownV2")
         return
-    await gemini.gemini_stream(bot, message, m, conf['model_2'])
+    await gemini.gemini_stream(bot, message, m, conf['model_1'])
 
 @authorized_user_only
 async def clear(message: Message, bot: TeleBot) -> None:

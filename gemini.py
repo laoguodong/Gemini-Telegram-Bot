@@ -9,6 +9,7 @@ from telebot import TeleBot
 from config import conf, generation_config, draw_generation_config, lang_settings, DEFAULT_SYSTEM_PROMPT, safety_settings
 from google import genai
 from google.genai import types
+from google.genai.types import Tool, UrlContext, GoogleSearch
 
 # API KEY管理
 api_keys = []  # 存储多个API key
@@ -46,7 +47,11 @@ error_info              =       conf["error_info"]
 before_generate_info    =       conf["before_generate_info"]
 download_pic_notify     =       conf["download_pic_notify"]
 
-search_tool = {'google_search': {}}
+# search_tool = {'google_search': {}}
+tools = [
+    Tool(google_search=GoogleSearch()),
+    Tool(url_context=UrlContext()),
+]
 
 # 初始化客户端
 client = None
@@ -317,7 +322,7 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
                     model=model_type,
                     config=types.GenerateContentConfig(
                         system_instruction=system_prompt,
-                        tools=[search_tool]
+                        tools=tools
                     )
                 )
                 chat_dict[str(message.from_user.id)] = chat
@@ -326,7 +331,7 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
                 # 如果设置系统提示词失败，尝试创建没有系统提示词的聊天
                 chat = client.aio.chats.create(
                     model=model_type, 
-                    config=types.GenerateContentConfig(tools=[search_tool])
+                    tools=tools
                 )
                 chat_dict[str(message.from_user.id)] = chat
         else:
@@ -355,68 +360,54 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
                         current_time = time.time()
 
                         if current_time - last_update >= update_interval:
-
                             try:
                                 await safe_edit_message(bot, escape(full_response), sent_message.chat.id, sent_message.message_id, "MarkdownV2")
                             except Exception as e:
                                 if "parse markdown" in str(e).lower():
                                     await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
-                                else:
-                                    if "message is not modified" not in str(e).lower():
-                                        print(f"Error updating message: {e}")
+                                elif "message is not modified" not in str(e).lower():
+                                    print(f"Error updating message: {e}")
                             last_update = current_time
 
                 try:
                     await safe_edit_message(bot, escape(full_response), sent_message.chat.id, sent_message.message_id, "MarkdownV2")
                 except Exception as e:
-                    try:
-                        if "parse markdown" in str(e).lower():
-                            await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
-                    except Exception:
+                    if "parse markdown" in str(e).lower():
+                        await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
+                    else:
                         print(f"Final message update error: {e}")
                 
-                # 成功发送消息，跳出循环
-                break
+                break # 成功，跳出循环
                 
             except Exception as e:
                 error_str = str(e)
-                
-                # 检查是否是配额用尽错误
-                if (hasattr(e, 'status_code') and e.status_code == 429) or \
-                   ("429 RESOURCE_EXHAUSTED" in error_str and "You exceeded your current quota" in error_str):
-                    # 尝试切换到下一个API密钥
-                    if switch_to_next_api_key():
-                        # 提示用户正在切换API密钥
-                        try:
-                            await safe_edit_message(bot, get_user_text(message.from_user.id, "api_quota_exhausted"), sent_message.chat.id, sent_message.message_id)
-                        except Exception:
-                            pass
-                        
-                        # 重新创建聊天会话
-                        try:
-                            system_prompt = get_system_prompt(message.from_user.id)
-                            chat = client.aio.chats.create(
-                                model=model_type,
-                                config=types.GenerateContentConfig(
-                                    system_instruction=system_prompt,
-                                    tools=[search_tool]
-                                )
-                            )
-                            chat_dict[str(message.from_user.id)] = chat
-                            retry_count += 1
-                            continue
-                        except Exception as chat_error:
-                            print(f"Error recreating chat with new API key: {chat_error}")
-                    else:
-                        # 所有API密钥都已尝试过
-                        await safe_edit_message(bot, f"{error_info}\n{get_user_text(message.from_user.id, 'all_api_quota_exhausted')}", sent_message.chat.id, sent_message.message_id)
+                error_msg_to_user = (
+                    f"{get_user_text(message.from_user.id, 'error_info')}\n"
+                    f"当前API密钥发生错误: `{escape(error_str)}`\n"
+                    f"正在尝试切换到下一个密钥..."
+                )
+                try:
+                    await safe_edit_message(bot, error_msg_to_user, sent_message.chat.id, sent_message.message_id, "MarkdownV2")
+                except Exception:
+                    await safe_edit_message(bot, error_msg_to_user, sent_message.chat.id, sent_message.message_id)
+
+                if switch_to_next_api_key():
+                    retry_count += 1
+                    try:
+                        system_prompt = get_system_prompt(message.from_user.id)
+                        chat = client.aio.chats.create(
+                            model=model_type,
+                            config=types.GenerateContentConfig(system_instruction=system_prompt, tools=tools)
+                        )
+                        chat_dict[str(message.from_user.id)] = chat
+                        continue
+                    except Exception as chat_error:
+                        print(f"Error recreating chat with new API key: {chat_error}")
+                        await safe_edit_message(bot, f"{error_info}\n切换密钥后创建会话失败: {chat_error}", sent_message.chat.id, sent_message.message_id)
                         break
                 else:
-                    # 其他错误，直接显示给用户
-                    await safe_edit_message(bot, f"{error_info}\nError details: {str(e)}", sent_message.chat.id, sent_message.message_id)
+                    await safe_edit_message(bot, f"{error_info}\n{get_user_text(message.from_user.id, 'all_api_quota_exhausted')}", sent_message.chat.id, sent_message.message_id)
                     break
-                    
-            retry_count += 1
             
     except Exception as e:
         if sent_message:
@@ -449,20 +440,15 @@ async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes)
                 await safe_edit_message(bot, f"{error_info}\n图像处理错误: {str(img_error)}", sent_message.chat.id, sent_message.message_id)
                 return
             
-            # 获取用户语言
-            lang = get_user_lang(message.from_user.id)
-            
-            
-            
             # 创建内容
             text_part = types.Part.from_text(text=m)
             image_part = types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
             
-            # 发送请求 - 使用draw_generation_config代替generation_config
+            # 发送请求
             response = await client.aio.models.generate_content(
                 model=model_3,
                 contents=[text_part, image_part],
-                config=types.GenerateContentConfig(**draw_generation_config)  # 修改这里使用draw_generation_config
+                config=types.GenerateContentConfig(**draw_generation_config)
             )
             
             # 检查响应
@@ -482,12 +468,10 @@ async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes)
                     if hasattr(part, 'inline_data') and part.inline_data:
                         img = part.inline_data.data
             
-            # 先发送图片(如果有)
             if img:
                 with io.BytesIO(img) as bio:
                     await bot.send_photo(message.chat.id, bio)
             
-            # 然后发送文本(如果有)
             if text:
                 if len(text) > 4000:
                     await bot.send_message(message.chat.id, escape(text[:4000]), parse_mode="MarkdownV2")
@@ -495,39 +479,28 @@ async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes)
                 else:
                     await bot.send_message(message.chat.id, escape(text), parse_mode="MarkdownV2")
             
-            # 删除"正在加载"消息
             await bot.delete_message(chat_id=sent_message.chat.id, message_id=sent_message.message_id)
-            
-            # 成功处理，跳出循环
-            break
-            
+            break # 成功，跳出循环
+
         except Exception as e:
             error_str = str(e)
-            
-            # 检查是否是配额用尽错误
-            if (hasattr(e, 'status_code') and e.status_code == 429) or \
-               ("429 RESOURCE_EXHAUSTED" in error_str and "You exceeded your current quota" in error_str):
-                # 尝试切换到下一个API密钥
-                if switch_to_next_api_key():
-                    # 提示用户正在切换API密钥
-                    try:
-                        await safe_edit_message(bot, get_user_text(message.from_user.id, "api_quota_exhausted"), sent_message.chat.id, sent_message.message_id)
-                    except Exception:
-                        pass
-                    
-                    retry_count += 1
-                    continue
-                else:
-                    # 所有API密钥都已尝试过
-                    await safe_edit_message(bot, f"{error_info}\n{get_user_text(message.from_user.id, 'all_api_quota_exhausted')}", sent_message.chat.id, sent_message.message_id)
-                    break
+            error_msg_to_user = (
+                f"{get_user_text(message.from_user.id, 'error_info')}\n"
+                f"当前API密钥发生错误: `{escape(error_str)}`\n"
+                f"正在尝试切换到下一个密钥..."
+            )
+            try:
+                await safe_edit_message(bot, error_msg_to_user, sent_message.chat.id, sent_message.message_id, "MarkdownV2")
+            except Exception:
+                await safe_edit_message(bot, error_msg_to_user, sent_message.chat.id, sent_message.message_id)
+
+            if switch_to_next_api_key():
+                retry_count += 1
+                continue
             else:
-                # 其他错误，直接显示给用户
-                await safe_edit_message(bot, f"{error_info}\nError details: {str(e)}", sent_message.chat.id, sent_message.message_id)
+                await safe_edit_message(bot, f"{error_info}\n{get_user_text(message.from_user.id, 'all_api_quota_exhausted')}", sent_message.chat.id, sent_message.message_id)
                 break
         
-        retry_count += 1
-
 async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: bytes, prompt: str = ""):
     sent_message = None
     try:
@@ -565,7 +538,7 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
                 current_model_name = model_1 if is_model_1_default else model_2
                 
                 # 调试日志
-                print(f"用户 {user_id} 使用模型 {current_model_name}, " + 
+                print(f"用户 {user_id} 使用模型 {current_model_name}, " +
                      f"已有会话: {user_id in active_chat_dict}")
                 
                 # Load image from bytes
@@ -582,184 +555,77 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
                 text_part = types.Part.from_text(text=prompt)
                 
                 # 确保聊天会话管理与 gemini_stream 函数保持一致
-                # 1. 检查用户是否已有聊天会话，如果没有则创建
-                # 注意：创建时应用系统提示词，但已有会话时不再设置系统提示词
                 if user_id not in active_chat_dict:
                     print(f"为用户 {user_id} 创建新会话，模型：{current_model_name}")
                     try:
-                        # 只在创建新会话时应用系统提示词
                         chat = client.aio.chats.create(
                             model=current_model_name,
-                            config=types.GenerateContentConfig(
-                                system_instruction=system_prompt,
-                                tools=[search_tool]
-                            )
+                            config=types.GenerateContentConfig(system_instruction=system_prompt, tools=tools)
                         )
                         active_chat_dict[user_id] = chat
                     except Exception as e:
                         print(f"创建带系统提示词的会话失败: {e}")
                         chat = client.aio.chats.create(
                             model=current_model_name,
-                            config=types.GenerateContentConfig(tools=[search_tool])
+                            config=types.GenerateContentConfig(tools=tools)
                         )
                         active_chat_dict[user_id] = chat
                 else:
-                    # 使用现有会话，不再设置系统提示词
                     print(f"用户 {user_id} 使用现有会话")
                     chat = active_chat_dict[user_id]
                 
-                # 2. 使用聊天会话发送包含图片的消息（保持上下文）
-                # 使用模型直接生成内容，避免重复系统提示词的影响
-                try:
-                    # 使用聊天会话发送多模态内容
-                    parts = [text_part, image_part]
-                    print(f"尝试通过聊天会话发送图片消息")
-                    response_stream = await chat.send_message_stream(parts)
-                    
-                    full_response = ""
-                    last_update = time.time()
-                    update_interval = conf["streaming_update_interval"]
-                    
-                    async for chunk in response_stream:
-                        if hasattr(chunk, 'text') and chunk.text:
-                            full_response += chunk.text
-                            current_time = time.time()
-                        
-                            if current_time - last_update >= update_interval:
-                                try:
-                                    await safe_edit_message(bot, escape(full_response), sent_message.chat.id, sent_message.message_id, "MarkdownV2")
-                                except Exception as e_stream:
-                                    if "parse markdown" in str(e_stream).lower():
-                                        await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
-                                    elif "message is not modified" not in str(e_stream).lower():
-                                        print(f"图片理解流更新错误: {e_stream}")
-                                
-                                last_update = current_time
-                    
-                    # Final update - try with markdown first, fall back to plain text
-                    try:
-                        await safe_edit_message(bot, escape(full_response), sent_message.chat.id, sent_message.message_id, "MarkdownV2")
-                    except Exception: # Fallback to sending raw text if markdown parsing fails on the final message
-                        await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
-                    
-                    print(f"图片处理成功，使用聊天会话方法")
-                    # 成功处理图片，跳出循环
-                    break
+                # 使用聊天会话发送多模态内容
+                parts = [text_part, image_part]
+                response_stream = await chat.send_message_stream(parts)
                 
-                except Exception as chat_error:
-                    print(f"通过聊天会话发送图片失败: {chat_error}")
-                    print(f"回退到直接调用模型方法")
+                full_response = ""
+                last_update = time.time()
+                update_interval = conf["streaming_update_interval"]
+                
+                async for chunk in response_stream:
+                    if hasattr(chunk, 'text') and chunk.text:
+                        full_response += chunk.text
+                        current_time = time.time()
                     
-                    # 失败后回退到直接调用模型的方法
-                    response_stream = await client.aio.models.generate_content_stream(
-                        model=current_model_name,
-                        contents=[text_part, image_part],
-                        config=types.GenerateContentConfig(
-                            system_instruction=system_prompt,
-                            **generation_config
-                        )
-                    )
-                    
-                    full_response = ""
-                    last_update = time.time()
-                    update_interval = conf["streaming_update_interval"]
-                    
-                    async for chunk in response_stream:
-                        if hasattr(chunk, 'text') and chunk.text:
-                            full_response += chunk.text
-                            current_time = time.time()
-                        
-                            if current_time - last_update >= update_interval:
-                                try:
-                                    await safe_edit_message(bot, escape(full_response), sent_message.chat.id, sent_message.message_id, "MarkdownV2")
-                                except Exception as e_stream:
-                                    if "parse markdown" in str(e_stream).lower():
-                                        await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
-                                    elif "message is not modified" not in str(e_stream).lower():
-                                        print(f"图片理解流更新错误: {e_stream}")
-                                
-                                last_update = current_time
-                    
-                    # Final update - try with markdown first, fall back to plain text
-                    try:
-                        await safe_edit_message(bot, escape(full_response), sent_message.chat.id, sent_message.message_id, "MarkdownV2")
-                    except Exception: # Fallback to sending raw text if markdown parsing fails on the final message
-                        await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
-                    
-                    # 在这种情况下手动添加图片和模型回复到聊天历史中
-                    try:
-                        print(f"手动更新聊天历史")
-                        # 创建一个新的聊天会话并手动设置历史记录
-                        user_content = types.Content.from_parts([text_part, image_part], role="user")
-                        model_content = types.Content.from_parts([types.Part.from_text(full_response)], role="model")
-                        
-                        if not hasattr(chat, 'history'):
-                            print(f"chat对象没有history属性，创建一个空列表")
-                            chat.history = []
-                        
-                        chat.history.append(user_content)
-                        chat.history.append(model_content)
-                        print(f"聊天历史更新成功")
-                    except Exception as history_error:
-                        print(f"手动更新聊天历史失败: {history_error}")
-                    
-                    # 成功处理图片，跳出循环
-                    break
+                        if current_time - last_update >= update_interval:
+                            try:
+                                await safe_edit_message(bot, escape(full_response), sent_message.chat.id, sent_message.message_id, "MarkdownV2")
+                            except Exception as e_stream:
+                                if "parse markdown" in str(e_stream).lower():
+                                    await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
+                                elif "message is not modified" not in str(e_stream).lower():
+                                    print(f"图片理解流更新错误: {e_stream}")
+                            
+                            last_update = current_time
+                
+                try:
+                    await safe_edit_message(bot, escape(full_response), sent_message.chat.id, sent_message.message_id, "MarkdownV2")
+                except Exception:
+                    await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
+                
+                break # 成功，跳出循环
             
             except Exception as e:
                 error_str = str(e)
-                
-                # 检查是否是配额用尽错误
-                if (hasattr(e, 'status_code') and e.status_code == 429) or \
-                   ("429 RESOURCE_EXHAUSTED" in error_str and "You exceeded your current quota" in error_str):
-                    # 尝试切换到下一个API密钥
-                    if switch_to_next_api_key():
-                        # 提示用户正在切换API密钥
-                        try:
-                            await safe_edit_message(bot, get_user_text(message.from_user.id, "api_quota_exhausted"), sent_message.chat.id, sent_message.message_id)
-                        except Exception:
-                            pass
-                        
-                        retry_count += 1
-                        continue
-                    else:
-                        # 所有API密钥都已尝试过
-                        await safe_edit_message(bot, f"{error_info}\n{get_user_text(message.from_user.id, 'all_api_quota_exhausted')}", sent_message.chat.id, sent_message.message_id)
-                        break
+                error_msg_to_user = (
+                    f"{get_user_text(message.from_user.id, 'error_info')}\n"
+                    f"当前API密钥发生错误: `{escape(error_str)}`\n"
+                    f"正在尝试切换到下一个密钥..."
+                )
+                try:
+                    await safe_edit_message(bot, error_msg_to_user, sent_message.chat.id, sent_message.message_id, "MarkdownV2")
+                except Exception:
+                    await safe_edit_message(bot, error_msg_to_user, sent_message.chat.id, sent_message.message_id)
+
+                if switch_to_next_api_key():
+                    retry_count += 1
+                    # 清除可能已创建的无效会话
+                    if user_id in active_chat_dict:
+                        del active_chat_dict[user_id]
+                    continue
                 else:
-                    # General exception handler
-                    error_detail_str = str(e)
-                    # Check for the specific API error about text-only output
-                    specific_api_error_check = ("This model only supports text output." in error_detail_str or \
-                    "only supports text and HHFM function calling" in error_detail_str) and \
-                    ("INVALID_ARGUMENT" in error_detail_str.upper() or isinstance(e, getattr(genai.errors, 'InvalidArgumentError', Exception)))
-                    
-                    error_message = f"{get_user_text(message.from_user.id, 'error_info')}\nError details: {error_detail_str}"
-                    if specific_api_error_check: # If it is the text-only error, provide a more helpful message
-                        if lang == "zh":
-                            error_message = (
-                            f"{get_user_text(message.from_user.id, 'error_info')}\n"
-                            f"API错误: {error_detail_str}\n"
-                            f"此错误表明模型 '{current_model_name}'（如在config.py中配置的）"
-                            f"只支持文本输出，但正在尝试生成多模态内容。\n"
-                            f"请检查config.py中的模型配置。"
-                            )
-                        else:
-                            error_message = (
-                            f"{get_user_text(message.from_user.id, 'error_info')}\n"
-                            f"API Error: {error_detail_str}\n"
-                            f"This error suggests that the model '{current_model_name}' (as configured in your config.py) "
-                            f"only supports text output, but is being asked to generate multimodal content.\n"
-                            f"Please check your model configuration in config.py."
-                            )
-                    
-                    if sent_message: # If a message was already sent to the user, edit it with the error
-                        await safe_edit_message(bot, error_message, sent_message.chat.id, sent_message.message_id)
-                    else: # Otherwise, reply to the original message with the error
-                        await bot.reply_to(message, error_message)
+                    await safe_edit_message(bot, f"{error_info}\n{get_user_text(message.from_user.id, 'all_api_quota_exhausted')}", sent_message.chat.id, sent_message.message_id)
                     break
-            
-            retry_count += 1
                 
     except Exception as e:
         if sent_message:
@@ -784,11 +650,6 @@ async def gemini_draw(bot:TeleBot, message:Message, m:str):
         
         while retry_count < max_retry_attempts:
             try:
-                # 获取用户语言
-                lang = get_user_lang(message.from_user.id)
-                
-                
-                
                 # 使用新的API方式进行绘图
                 response = await client.aio.models.generate_content(
                     model=model_3,
@@ -814,12 +675,10 @@ async def gemini_draw(bot:TeleBot, message:Message, m:str):
                         if hasattr(part, 'inline_data') and part.inline_data:
                             img = part.inline_data.data
                 
-                # 先发送图片(如果有)
                 if img:
                     with io.BytesIO(img) as bio:
                         await bot.send_photo(message.chat.id, bio)
                 
-                # 然后发送文本(如果有)
                 if text:
                     if len(text) > 4000:
                         await bot.send_message(message.chat.id, escape(text[:4000]), parse_mode="MarkdownV2")
@@ -827,43 +686,31 @@ async def gemini_draw(bot:TeleBot, message:Message, m:str):
                     else:
                         await bot.send_message(message.chat.id, escape(text), parse_mode="MarkdownV2")
                 
-                # 删除"绘图中"消息
                 try:
                     await bot.delete_message(chat_id=sent_message.chat.id, message_id=sent_message.message_id)
                 except Exception:
                     pass
                 
-                # 成功生成图片，跳出循环
-                break
+                break # 成功，跳出循环
                 
             except Exception as e:
                 error_str = str(e)
-                
-                # 检查是否是配额用尽错误
-                if (hasattr(e, 'status_code') and e.status_code == 429) or \
-                   ("429 RESOURCE_EXHAUSTED" in error_str and "You exceeded your current quota" in error_str):
-                    # 尝试切换到下一个API密钥
-                    if switch_to_next_api_key():
-                        # 提示用户正在切换API密钥
-                        try:
-                            await safe_edit_message(bot, get_user_text(message.from_user.id, "api_quota_exhausted"), sent_message.chat.id, sent_message.message_id)
-                        except Exception:
-                            pass
-                            
-                        retry_count += 1
-                        continue
-                    else:
-                        # 所有API密钥都已尝试过
-                        error_msg = get_user_text(message.from_user.id, "error_info")
-                        await safe_edit_message(bot, f"{error_msg}\n{get_user_text(message.from_user.id, 'all_api_quota_exhausted')}", sent_message.chat.id, sent_message.message_id)
-                        break
+                error_msg_to_user = (
+                    f"{get_user_text(message.from_user.id, 'error_info')}\n"
+                    f"当前API密钥发生错误: `{escape(error_str)}`\n"
+                    f"正在尝试切换到下一个密钥..."
+                )
+                try:
+                    await safe_edit_message(bot, error_msg_to_user, sent_message.chat.id, sent_message.message_id, "MarkdownV2")
+                except Exception:
+                    await safe_edit_message(bot, error_msg_to_user, sent_message.chat.id, sent_message.message_id)
+
+                if switch_to_next_api_key():
+                    retry_count += 1
+                    continue
                 else:
-                    # 其他错误，直接显示给用户
-                    error_msg = get_user_text(message.from_user.id, "error_info")
-                    await safe_edit_message(bot, f"{error_msg}\nError details: {str(e)}", sent_message.chat.id, sent_message.message_id)
+                    await safe_edit_message(bot, f"{error_info}\n{get_user_text(message.from_user.id, 'all_api_quota_exhausted')}", sent_message.chat.id, sent_message.message_id)
                     break
-            
-            retry_count += 1
             
     except Exception as e:
         error_msg = get_user_text(message.from_user.id, "error_info")
