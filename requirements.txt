@@ -3,3 +3,4 @@ google-genai>=1.0.0
 aiohttp
 md2tgmd
 Pillow
+google-api-core

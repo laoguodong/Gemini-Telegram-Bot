@@ -8,12 +8,14 @@ from functools import wraps
 import config
 from config import conf, lang_settings, USER_DATA_FILE
 import gemini
+import re
 
 # Directly import functions from the gemini module
 from gemini import (
     get_user_text, get_user_lang, switch_language, get_language,
     set_system_prompt, delete_system_prompt, reset_system_prompt, show_system_prompt,
-    add_api_key, remove_api_key, list_api_keys, set_current_api_key, get_current_api_key
+    add_api_key, remove_api_key, list_api_keys, set_current_api_key, get_current_api_key,
+    remove_all_api_keys, unified_api_key_check
 )
 
 # --- Menu Definitions ---
@@ -34,6 +36,7 @@ admin_menu_zh = [
     BotCommand("api_remove", "🗑️ 删除密钥"),
     BotCommand("api_list", "📋 列出密钥"),
     BotCommand("api_switch", "🔄 切换密钥"),
+    BotCommand("api_check", "检查密钥状态"),
 ]
 
 user_menu_zh = [
@@ -62,6 +65,7 @@ admin_menu_en = [
     BotCommand("api_remove", "🗑️ Remove API Key"),
     BotCommand("api_list", "📋 List API Keys"),
     BotCommand("api_switch", "🔄 Switch API Key"),
+    BotCommand("api_check", "Check Key Status"),
 ]
 
 user_menu_en = [
@@ -284,83 +288,84 @@ async def list_users(message: Message, bot: TeleBot):
 
 @admin_only
 async def api_key_add_handler(message: Message, bot: TeleBot):
+    user_id = message.from_user.id
     try:
-        keys_to_add = message.text.split(maxsplit=1)[1].strip()
-        # 支持逗号、换行等多种分隔符
-        keys = [key.strip() for key in keys_to_add.replace('，', ',').replace('\n', ',').split(',') if key.strip()]
-        
+        command_parts = message.text.strip().split(maxsplit=1)
+        if len(command_parts) < 2:
+            await bot.reply_to(message, get_user_text(user_id, "api_key_add_help"))
+            return
+            
+        keys_text = command_parts[1]
+        keys = [key.strip() for key in re.split(r'[\s,]+', keys_text) if key.strip()]
+
         if not keys:
-            await bot.reply_to(message, get_user_text(message.from_user.id, "api_key_add_help"))
+            await bot.reply_to(message, get_user_text(user_id, "api_key_add_help"))
             return
 
-        added_keys = []
-        existing_keys = []
-        invalid_keys = []
-
+        added_count, exist_count, invalid_count = 0, 0, 0
         for key in keys:
             if gemini.validate_api_key_format(key):
                 if gemini.add_api_key(key):
-                    added_keys.append(key)
+                    added_count += 1
                 else:
-                    existing_keys.append(key)
+                    exist_count += 1
             else:
-                invalid_keys.append(key)
+                invalid_count += 1
         
-        response = ""
-        if added_keys:
-            response += f"✅ {len(added_keys)} " + get_user_text(message.from_user.id, "api_key_added") + "\n"
-        if existing_keys:
-            response += f"⚠️ {len(existing_keys)} " + get_user_text(message.from_user.id, "api_key_already_exists") + "\n"
-        if invalid_keys:
-            response += f"❌ {len(invalid_keys)} " + get_user_text(message.from_user.id, "api_key_invalid_format") + "\n"
+        response = f"{get_user_text(user_id, 'api_key_bulk_add_summary')}\n"
+        if added_count > 0: response += f"✅ {added_count} {get_user_text(user_id, 'api_key_added_count')}\n"
+        if exist_count > 0: response += f"⚠️ {exist_count} {get_user_text(user_id, 'api_key_exist_count')}\n"
+        if invalid_count > 0: response += f"❌ {invalid_count} {get_user_text(user_id, 'api_key_invalid_count')}\n"
         
         await bot.reply_to(message, response.strip())
 
-    except IndexError:
-        await bot.reply_to(message, get_user_text(message.from_user.id, "api_key_add_help"))
+    except Exception:
+        traceback.print_exc()
+        await bot.reply_to(message, get_user_text(user_id, "api_key_add_help"))
 
 @admin_only
 async def api_key_remove_handler(message: Message, bot: TeleBot):
+    user_id = message.from_user.id
     try:
-        key_or_index_to_remove = message.text.split(maxsplit=1)[1].strip()
-        
-        # 尝试按索引删除
+        arg = message.text.strip().split(maxsplit=1)[1].strip().lower()
+
+        if arg == 'all':
+            remove_all_api_keys()
+            await bot.reply_to(message, get_user_text(user_id, "api_key_all_removed"))
+            return
+
         try:
-            index = int(key_or_index_to_remove)
-            keys = gemini.list_api_keys() # 获取原始key列表
-            if 0 <= index < len(keys):
+            index = int(arg)
+            if 0 <= index < len(gemini.api_keys):
                 key_to_remove = gemini.api_keys[index]
                 if gemini.remove_api_key(key_to_remove):
-                    await bot.reply_to(message, get_user_text(message.from_user.id, "api_key_removed"))
+                    await bot.reply_to(message, get_user_text(user_id, "api_key_removed"))
                 else:
-                    # This case should ideally not happen if logic is correct
-                    await bot.reply_to(message, get_user_text(message.from_user.id, "api_key_not_found"))
+                    await bot.reply_to(message, get_user_text(user_id, "api_key_not_found"))
             else:
-                await bot.reply_to(message, get_user_text(message.from_user.id, "api_key_switch_invalid"))
+                await bot.reply_to(message, get_user_text(user_id, "api_key_switch_invalid"))
             return
         except ValueError:
-            # 如果不是数字，则按密钥本身删除
             pass
-
-        # 按密钥字符串删除
-        if gemini.remove_api_key(key_or_index_to_remove):
-            await bot.reply_to(message, get_user_text(message.from_user.id, "api_key_removed"))
-        else:
-            await bot.reply_to(message, get_user_text(message.from_user.id, "api_key_not_found"))
+        
+        await bot.reply_to(message, get_user_text(user_id, "api_key_remove_help"))
 
     except IndexError:
-        await bot.reply_to(message, get_user_text(message.from_user.id, "api_key_remove_help"))
+        await bot.reply_to(message, get_user_text(user_id, "api_key_remove_help"))
+    except Exception as e:
+        traceback.print_exc()
+        await bot.reply_to(message, f"An error occurred: {e}")
 
 @admin_only
 async def api_key_list_handler(message: Message, bot: TeleBot):
-    keys = gemini.list_api_keys()
+    keys = list_api_keys()
     if not keys:
         await bot.reply_to(message, get_user_text(message.from_user.id, "api_key_list_empty"))
         return
     
     response = get_user_text(message.from_user.id, "api_key_list_title") + "\n"
     for i, key in enumerate(keys):
-        response += f"`{i}`: {escape(key)}\n"
+        response += f"`{i}`: `{escape(key)}`\n"
         
     await bot.reply_to(message, response, parse_mode="MarkdownV2")
 
@@ -376,3 +381,37 @@ async def api_key_switch_handler(message: Message, bot: TeleBot):
             
     except (IndexError, ValueError):
         await bot.reply_to(message, get_user_text(message.from_user.id, "api_key_switch_help"))
+
+@admin_only
+async def api_check_handler(message: Message, bot: TeleBot):
+    user_id = message.from_user.id
+    sent_message = await bot.reply_to(message, get_user_text(user_id, "api_checking_message"))
+    
+    paid_model = conf.get("paid_model_for_check")
+    standard_model = conf.get("model_1")
+    paid_keys, standard_keys, invalid_keys = await unified_api_key_check(paid_model, standard_model)
+    
+    # Correctly handle the (index, key) tuples
+    title = escape(get_user_text(user_id, 'api_check_results_title'))
+    paid_title = escape(f"{get_user_text(user_id, 'api_check_paid_keys')} ({len(paid_keys)})")
+    standard_title = escape(f"{get_user_text(user_id, 'api_check_standard_keys')} ({len(standard_keys)})")
+    invalid_title = escape(f"{get_user_text(user_id, 'api_check_invalid_keys')} ({len(invalid_keys)})")
+
+    response = f"*{title}*\n\n"
+    
+    response += f"*{paid_title}*\n"
+    if paid_keys:
+        for index, key in paid_keys:
+            response += f"`{index}`: `{escape(key)}`\n"
+            
+    response += f"\n*{standard_title}*\n"
+    if standard_keys:
+        for index, key in standard_keys:
+            response += f"`{index}`: `{escape(key)}`\n"
+            
+    response += f"\n*{invalid_title}*\n"
+    if invalid_keys:
+        for index, key in invalid_keys:
+            response += f"`{index}`: `{escape(key)}`\n"
+            
+    await bot.edit_message_text(response, sent_message.chat.id, sent_message.message_id, parse_mode="MarkdownV2")

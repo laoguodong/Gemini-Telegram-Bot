@@ -111,6 +111,10 @@ async def api_list(message):
 async def api_switch(message):
     await handlers.api_key_switch_handler(message, bot)
 
+@bot.message_handler(commands=['api_check'])
+async def api_check(message):
+    await handlers.api_check_handler(message, bot)
+
 # Content handlers
 @bot.message_handler(content_types=['photo'])
 async def photo_handler(message):
