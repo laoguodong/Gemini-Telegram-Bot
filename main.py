@@ -115,6 +115,22 @@ async def api_switch(message):
 async def api_check(message):
     await handlers.api_check_handler(message, bot)
 
+@bot.message_handler(commands=['system'])
+async def system_prompt(message):
+    await handlers.system_prompt_handler(message, bot)
+
+@bot.message_handler(commands=['system_clear'])
+async def system_clear(message):
+    await handlers.system_prompt_clear_handler(message, bot)
+
+@bot.message_handler(commands=['system_reset'])
+async def system_reset(message):
+    await handlers.system_prompt_reset_handler(message, bot)
+
+@bot.message_handler(commands=['system_show'])
+async def system_show(message):
+    await handlers.system_prompt_show_handler(message, bot)
+
 # Content handlers
 @bot.message_handler(content_types=['photo'])
 async def photo_handler(message):
