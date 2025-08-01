@@ -81,8 +81,8 @@ lang_settings = {
 
 conf = {
     "default_language": "zh",  # 默认使用中文
-    "model_1": "gemini-2.5-flash",
-    "model_2": "gemini-2.5-pro",  
+    "model_1": "gemini-2.5-pro",
+    "model_2": "gemini-2.5-flash",  
     "model_3": "gemini-2.0-flash-preview-image-generation",  # for draw
     "streaming_update_interval": 0.5,  # Streaming answer update interval (seconds)
 }
@@ -126,3 +126,9 @@ draw_generation_config = {
     "response_modalities": ['Text', 'IMAGE'],
     "safety_settings": safety_settings,
 }
+
+# 管理员 Telegram User ID (请自行修改)
+ADMIN_UID = []  # 使用列表可以支持多个管理员
+
+# 授权用户列表文件路径
+USER_DATA_FILE = "authorized_users.json"

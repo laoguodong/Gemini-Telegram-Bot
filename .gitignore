@@ -163,3 +163,5 @@ cython_debug/
 
 .vs/
 
+authorized_users.json
+
