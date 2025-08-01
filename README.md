@@ -94,16 +94,18 @@ python main.py 123456:ABC-DEF your_api_key_1,your_api_key_2 --admin-uid 12345678
 
 ```bash
 # 构建 Docker 镜像
-docker build -t gemini-telegram-bot .
+docker build -t gemini_tg_bot .
 
 # 运行容器
 docker run -d --name gemini-bot \
-  -e TG_TOKEN="<你的TG_BOT_TOKEN>" \
-  -e GEMINI_KEY="<你的GEMINI_API_KEY>" \
-  -e ADMIN_UID="<你的管理员UID>" \
-  gemini-telegram-bot
+  -e TELEGRAM_BOT_API_KEY="<你的TG_BOT_TOKEN>" \
+  -e GEMINI_API_KEYS="<你的GEMINI_API_KEY>" \
+  -e ADMIN_UIDS="<你的管理员UID>" \
+  gemini_tg_bot
 ```
 
 **注意**: 在 Docker 中，环境变量的值应该用引号括起来。多个 API 密钥请用逗号分隔，多个管理员 UID 请用空格分隔。
+
+
 
 ```

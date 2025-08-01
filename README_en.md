@@ -94,14 +94,15 @@ python main.py 123456:ABC-DEF your_api_key_1,your_api_key_2 --admin-uid 12345678
 
 ```bash
 # Build the Docker image
-docker build -t gemini-telegram-bot .
+docker build -t gemini_tg_bot .
 
 # Run the container
 docker run -d --name gemini-bot \
-  -e TG_TOKEN="<YOUR_TG_BOT_TOKEN>" \
-  -e GEMINI_KEY="<YOUR_GEMINI_API_KEY>" \
-  -e ADMIN_UID="<YOUR_ADMIN_UID>" \
-  gemini-telegram-bot
+  -e TELEGRAM_BOT_API_KEY="<YOUR_TG_BOT_TOKEN>" \
+  -e GEMINI_API_KEYS="<YOUR_GEMINI_API_KEY>" \
+  -e ADMIN_UIDS="<YOUR_ADMIN_UID>" \
+  gemini_tg_bot
 ```
 
 **Note**: When using Docker, enclose the environment variable values in quotes. For multiple API keys, separate them with commas. For multiple admin UIDs, separate them with spaces.
+
