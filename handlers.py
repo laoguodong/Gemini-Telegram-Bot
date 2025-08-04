@@ -482,7 +482,7 @@ async def api_clean_handler(message: Message, bot: TeleBot):
             response_lines.append("")
 
             if not removed_keys_info:
-                response_lines.append("✅ No invalid keys found to remove.")
+                response_lines.append(get_user_text(user_id, "api_clean_no_invalid_keys"))
             else:
                 response_lines.append(get_user_text(user_id, 'api_clean_removed_keys'))
                 for key in removed_keys_info:

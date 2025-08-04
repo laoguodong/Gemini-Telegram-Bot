@@ -86,45 +86,32 @@ async def unified_api_key_check(paid_model_name, standard_model_name):
             
             def get_cooldown_from_exc(e):
                 """Robustly parses retry-after from various exception types."""
-                # Case 1: google.generativeai.errors.APIError (has response attribute)
                 if hasattr(e, "response") and hasattr(e.response, "headers"):
                     retry_after = e.response.headers.get("retry-after")
                     if retry_after and retry_after.isdigit():
                         return int(retry_after)
-
-                # Case 2: google.api_core.exceptions.RetryError (gRPC metadata)
                 if hasattr(e, "__cause__") and hasattr(e.__cause__, "trailing_metadata"):
                     for k, v in e.__cause__.trailing_metadata():
                         if k == 'retry-after' and v.isdigit():
                             return int(v)
-                
-                # Case 3: Fallback to string parsing
                 if "429" in str(e):
                     match = re.search(r"retry-after: (\d+)", str(e), re.IGNORECASE)
                     if match:
                         return int(match.group(1))
-                
-                return 60  # Default cooldown
+                return 60
 
-            # 1. Check for Paid status
+            # 1. Attempt to classify as PAID
             try:
-                await temp_client.aio.models.generate_content(model=paid_model_name, contents="hi")
-                logger.info(f"Key {index} ({key[:5]}...) is PAID.")
-                return "paid", (index, key)
-            except (google_api_exceptions.ResourceExhausted, google_api_exceptions.TooManyRequests) as e:
-                cooldown = get_cooldown_from_exc(e)
-                api_key_cooldowns[key] = time.time() + cooldown
-                logger.warning(f"Key {index} ({key[:5]}...) is RATE LIMITED. Cooldown set for {cooldown}s.")
-                return "rate_limited", (index, key)
-            except Exception as e:
-                if "429" in str(e):
-                    cooldown = get_cooldown_from_exc(e)
-                    api_key_cooldowns[key] = time.time() + cooldown
-                    logger.warning(f"Key {index} ({key[:5]}...) is RATE LIMITED (429). Cooldown set for {cooldown}s.")
-                    return "rate_limited", (index, key)
+                if paid_model_name:
+                    await temp_client.aio.models.generate_content(model=paid_model_name, contents="hi")
+                    logger.info(f"Key {index} ({key[:5]}...) is PAID.")
+                    return "paid", (index, key)
+            except Exception:
+                # If paid check fails for ANY reason, just ignore and proceed to standard check.
+                # This is because a standard key will fail the paid check, but that doesn't mean it's invalid or rate-limited.
                 pass
 
-            # 2. Check for Standard status
+            # 2. Attempt to classify as STANDARD (baseline functionality)
             try:
                 await temp_client.aio.models.generate_content(model=standard_model_name, contents="hi")
                 logger.info(f"Key {index} ({key[:5]}...) is STANDARD.")
@@ -144,7 +131,9 @@ async def unified_api_key_check(paid_model_name, standard_model_name):
                 logger.error(f"Key {index} ({key[:5]}...) is INVALID. Reason: {type(e).__name__}")
                 return "invalid", (index, key)
 
-    tasks = [check_key(i, key) for i, key in enumerate(api_keys)]
+    # Create a copy of the keys to check to avoid race conditions if the list is modified elsewhere
+    keys_to_check = list(api_keys)
+    tasks = [check_key(i, key) for i, key in enumerate(keys_to_check)]
     results = await asyncio.gather(*tasks)
 
     paid_keys = [item for status, item in results if status == 'paid']
