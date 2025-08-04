@@ -430,7 +430,14 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
                 active_chat_dict = gemini_chat_dict if is_model_1_default else gemini_pro_chat_dict
                 current_model_name = model_1 if is_model_1_default else model_2
                 
-                image_bytes = Image.open(io.BytesIO(photo_file)).tobytes()
+                # Corrected image processing
+                image = Image.open(io.BytesIO(photo_file))
+                if image.mode != 'RGB':
+                    image = image.convert('RGB')
+                buffer = io.BytesIO()
+                image.save(buffer, format="JPEG")
+                image_bytes = buffer.getvalue()
+                
                 system_prompt = get_system_prompt(user_id)
                 
                 image_part = types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
