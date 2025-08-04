@@ -1,6 +1,5 @@
 import io
 import time
-import traceback
 import sys
 from PIL import Image
 from telebot.types import Message
@@ -9,21 +8,17 @@ from telebot import TeleBot
 from config import conf, generation_config, draw_generation_config, lang_settings, DEFAULT_SYSTEM_PROMPT, safety_settings
 from google import genai
 from google.genai import types
+from google.api_core import exceptions as google_api_exceptions
 from google.genai.types import Tool, UrlContext, GoogleSearch
 
+import re
 import asyncio
 import logging
 
-# --- Logging Setup ---
-# (Logging is disabled but can be re-enabled by changing the handler)
-# handler = logging.FileHandler('key_check.log', mode='w')
-handler = logging.NullHandler()
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[handler]
-)
-# --- End Logging Setup ---
+logger = logging.getLogger(__name__)
+
+# Concurrency lock for operations on shared API key resources
+api_key_lock = asyncio.Lock()
 
 # API KEY管理
 api_keys = []
@@ -39,6 +34,9 @@ if len(sys.argv) > 2:
             clean_key = key.strip()
             if clean_key:
                 api_keys.append(clean_key)
+
+# Cooldown tracking for rate-limited keys
+api_key_cooldowns = {}
 
 gemini_draw_dict = {}
 gemini_chat_dict = {}
@@ -65,55 +63,96 @@ if api_keys:
     try:
         client = genai.Client(api_key=api_keys[current_api_key_index])
     except Exception as e:
-        print(f"Error initializing client: {e}")
-
-async def check_model_access(key, model_name, semaphore):
-    """
-    Checks if a key can access a model by making a minimal generation request.
-    """
-    async with semaphore:
-        try:
-            temp_client = genai.Client(api_key=key)
-            await temp_client.aio.models.generate_content(
-                model=model_name,
-                contents="hi"
-            )
-            logging.info(f"SUCCESS: Key starting with {key[:5]}... accessed model {model_name}.")
-            return True
-        except Exception as e:
-            logging.error(f"FAILURE: Key starting with {key[:5]}... failed model {model_name}. Reason: {type(e).__name__} - {e}")
-            return False
+        logger.error(f"Error initializing client: {e}")
 
 async def unified_api_key_check(paid_model_name, standard_model_name):
     """
     Checks all API keys and returns them classified with their original indices.
+    Categories: paid, standard, rate_limited, invalid
     """
     semaphore = asyncio.Semaphore(conf.get("api_check_concurrency", 10))
 
-    async def check_paid_task(index, key):
-        can_access = await check_model_access(key, paid_model_name, semaphore)
-        return index, key, can_access
+    async def check_key(index, key):
+        # If the key is in cooldown, don't check it, just classify it as rate_limited
+        if key in api_key_cooldowns and time.time() < api_key_cooldowns[key]:
+            return "rate_limited", (index, key)
+        
+        # If cooldown has expired, remove it from the tracking dict
+        if key in api_key_cooldowns:
+            del api_key_cooldowns[key]
 
-    paid_check_tasks = [check_paid_task(i, key) for i, key in enumerate(api_keys)]
-    paid_check_results = await asyncio.gather(*paid_check_tasks)
+        async with semaphore:
+            temp_client = genai.Client(api_key=key)
+            
+            def get_cooldown_from_exc(e):
+                """Robustly parses retry-after from various exception types."""
+                # Case 1: google.generativeai.errors.APIError (has response attribute)
+                if hasattr(e, "response") and hasattr(e.response, "headers"):
+                    retry_after = e.response.headers.get("retry-after")
+                    if retry_after and retry_after.isdigit():
+                        return int(retry_after)
 
-    paid_keys = [(i, key) for i, key, access in paid_check_results if access]
-    keys_for_standard_check = [(i, key) for i, key, access in paid_check_results if not access]
+                # Case 2: google.api_core.exceptions.RetryError (gRPC metadata)
+                if hasattr(e, "__cause__") and hasattr(e.__cause__, "trailing_metadata"):
+                    for k, v in e.__cause__.trailing_metadata():
+                        if k == 'retry-after' and v.isdigit():
+                            return int(v)
+                
+                # Case 3: Fallback to string parsing
+                if "429" in str(e):
+                    match = re.search(r"retry-after: (\d+)", str(e), re.IGNORECASE)
+                    if match:
+                        return int(match.group(1))
+                
+                return 60  # Default cooldown
 
-    standard_keys = []
-    invalid_keys = []
-    if keys_for_standard_check:
-        async def check_standard_task(index, key):
-            can_access = await check_model_access(key, standard_model_name, semaphore)
-            return index, key, can_access
+            # 1. Check for Paid status
+            try:
+                await temp_client.aio.models.generate_content(model=paid_model_name, contents="hi")
+                logger.info(f"Key {index} ({key[:5]}...) is PAID.")
+                return "paid", (index, key)
+            except (google_api_exceptions.ResourceExhausted, google_api_exceptions.TooManyRequests) as e:
+                cooldown = get_cooldown_from_exc(e)
+                api_key_cooldowns[key] = time.time() + cooldown
+                logger.warning(f"Key {index} ({key[:5]}...) is RATE LIMITED. Cooldown set for {cooldown}s.")
+                return "rate_limited", (index, key)
+            except Exception as e:
+                if "429" in str(e):
+                    cooldown = get_cooldown_from_exc(e)
+                    api_key_cooldowns[key] = time.time() + cooldown
+                    logger.warning(f"Key {index} ({key[:5]}...) is RATE LIMITED (429). Cooldown set for {cooldown}s.")
+                    return "rate_limited", (index, key)
+                pass
 
-        standard_check_tasks = [check_standard_task(i, key) for i, key in keys_for_standard_check]
-        standard_check_results = await asyncio.gather(*standard_check_tasks)
+            # 2. Check for Standard status
+            try:
+                await temp_client.aio.models.generate_content(model=standard_model_name, contents="hi")
+                logger.info(f"Key {index} ({key[:5]}...) is STANDARD.")
+                return "standard", (index, key)
+            except (google_api_exceptions.ResourceExhausted, google_api_exceptions.TooManyRequests) as e:
+                cooldown = get_cooldown_from_exc(e)
+                api_key_cooldowns[key] = time.time() + cooldown
+                logger.warning(f"Key {index} ({key[:5]}...) is RATE LIMITED. Cooldown set for {cooldown}s.")
+                return "rate_limited", (index, key)
+            except Exception as e:
+                if "429" in str(e):
+                    cooldown = get_cooldown_from_exc(e)
+                    api_key_cooldowns[key] = time.time() + cooldown
+                    logger.warning(f"Key {index} ({key[:5]}...) is RATE LIMITED (429). Cooldown set for {cooldown}s.")
+                    return "rate_limited", (index, key)
+                
+                logger.error(f"Key {index} ({key[:5]}...) is INVALID. Reason: {type(e).__name__}")
+                return "invalid", (index, key)
 
-        standard_keys = [(i, key) for i, key, access in standard_check_results if access]
-        invalid_keys = [(i, key) for i, key, access in standard_check_results if not access]
+    tasks = [check_key(i, key) for i, key in enumerate(api_keys)]
+    results = await asyncio.gather(*tasks)
 
-    return paid_keys, standard_keys, invalid_keys
+    paid_keys = [item for status, item in results if status == 'paid']
+    standard_keys = [item for status, item in results if status == 'standard']
+    rate_limited_keys = [item for status, item in results if status == 'rate_limited']
+    invalid_keys = [item for status, item in results if status == 'invalid']
+
+    return paid_keys, standard_keys, rate_limited_keys, invalid_keys
 
 # The rest of the file remains the same...
 def get_current_api_key():
@@ -127,18 +166,30 @@ def switch_to_next_api_key():
         return False
     
     original_index = current_api_key_index
-    current_api_key_index = (current_api_key_index + 1) % len(api_keys)
     
-    if current_api_key_index == original_index:
-        return False
-    
-    try:
-        client = genai.Client(api_key=api_keys[current_api_key_index])
-        print(f"成功切换到API密钥 #{current_api_key_index}")
-        return True
-    except Exception as e:
-        print(f"Error switching to next API key: {e}")
-        return switch_to_next_api_key()
+    for _ in range(len(api_keys)):
+        current_api_key_index = (current_api_key_index + 1) % len(api_keys)
+        
+        # If we have looped back to the start, it means all keys might be in cooldown
+        if current_api_key_index == original_index:
+            return False
+
+        key_to_check = api_keys[current_api_key_index]
+        
+        # Check if the next key is in cooldown
+        if key_to_check in api_key_cooldowns and time.time() < api_key_cooldowns[key_to_check]:
+            logger.warning(f"Skipping key #{current_api_key_index} as it is in cooldown.")
+            continue
+
+        try:
+            client = genai.Client(api_key=key_to_check)
+            logger.info(f"Successfully switched to API key #{current_api_key_index}")
+            return True
+        except Exception as e:
+            logger.error(f"Error switching to next API key #{current_api_key_index}: {e}")
+            continue # Try the next one
+            
+    return False
 
 def validate_api_key_format(key):
     if not key or len(key) < 8:
@@ -159,7 +210,7 @@ def add_api_key(key):
                 client = genai.Client(api_key=key)
                 return True
             except Exception as e:
-                print(f"Error initializing client with new API key: {e}")
+                logger.error(f"Error initializing client with new API key: {e}")
                 api_keys.pop()
                 return False
         return True
@@ -168,20 +219,38 @@ def add_api_key(key):
 def remove_api_key(key):
     global current_api_key_index, client
     if key in api_keys:
-        index = api_keys.index(key)
+        # --- FIX START: Preserve active key and re-sync index ---
+        active_key_value = api_keys[current_api_key_index] if api_keys else None
+        was_current_key = (key == active_key_value)
+        
         api_keys.remove(key)
         
         if not api_keys:
             current_api_key_index = 0
             client = None
+            logger.info("All API keys removed. Client is now None.")
             return True
         
-        if index == current_api_key_index:
-            if index >= len(api_keys):
-                current_api_key_index = len(api_keys) - 1
+        if was_current_key:
+            # If the active key was removed, reset to the first key
+            current_api_key_index = 0
+        else:
+            # If a non-active key was removed, find the new index of the original active key
+            try:
+                current_api_key_index = api_keys.index(active_key_value)
+            except ValueError:
+                # This case happens if the active key was also invalid and removed by another process.
+                # Safely reset to the first key.
+                current_api_key_index = 0
+        
+        # Always re-initialize the client to ensure state consistency
+        try:
             client = genai.Client(api_key=api_keys[current_api_key_index])
-        elif index < current_api_key_index:
-            current_api_key_index -= 1
+            logger.info(f"Key removed. New active key is at index {current_api_key_index}.")
+        except Exception as e:
+            logger.error(f"Failed to re-initialize client after removing key: {e}")
+            client = None
+        # --- FIX END ---
         
         return True
     return False
@@ -211,7 +280,7 @@ def set_current_api_key(index):
             client = test_client
             return True
         except Exception as e:
-            print(f"Error switching to API key at index {index}: {e}")
+            logger.error(f"Error switching to API key at index {index}: {e}")
             return False
     return False
 
@@ -273,20 +342,23 @@ async def safe_edit_message(bot, text, chat_id, message_id, parse_mode=None):
         await bot.edit_message_text(**kwargs)
     except Exception as e:
         if "message is not modified" not in str(e).lower():
-            print(f"Error editing message: {e}")
+            logger.error(f"Error editing message: {e}", exc_info=True)
 
 async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
     sent_message = None
     try:
-        if client is None:
-            await bot.reply_to(message, get_user_text(message.from_user.id, "api_key_list_empty"))
-            return
+        # Lock before checking for client to prevent race conditions
+        async with api_key_lock:
+            if client is None:
+                await bot.reply_to(message, get_user_text(message.from_user.id, "api_key_list_empty") )
+                return
             
         sent_message = await bot.reply_to(message, "🤖 Generating answers...")
 
         chat_dict = gemini_chat_dict if model_type == model_1 else gemini_pro_chat_dict
         user_id_str = str(message.from_user.id)
 
+        # Initialize chat outside the retry loop but after the client check
         if user_id_str not in chat_dict:
             system_prompt = get_system_prompt(message.from_user.id)
             try:
@@ -296,7 +368,7 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
                 )
                 chat_dict[user_id_str] = chat
             except Exception as e:
-                print(f"Failed to set system prompt: {e}")
+                logger.error(f"Failed to set system prompt: {e}")
                 chat = client.aio.chats.create(model=model_type, tools=tools)
                 chat_dict[user_id_str] = chat
         else:
@@ -306,7 +378,9 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
         if lang == "zh" and "用中文回复" not in m: m += "，请用中文回复"
 
         retry_count = 0
-        while retry_count < len(api_keys):
+        # Use a copy of api_keys length for stable loop bound
+        max_retries = len(api_keys)
+        while retry_count < max_retries:
             try:
                 response = await chat.send_message_stream(m)
                 full_response = ""
@@ -323,25 +397,34 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
                                 if "parse markdown" in str(e).lower():
                                     await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
                                 elif "message is not modified" not in str(e).lower():
-                                    print(f"Error updating message: {e}")
+                                    logger.warning(f"Error updating message: {e}")
                             last_update = time.time()
 
                 try:
-                    await safe_edit_message(bot, escape(full_response), sent_message.chat.id, sent_message.message_id, "MarkdownV2")
+                    final_text = escape(full_response)
+                    if not final_text.strip():
+                        final_text = get_user_text(message.from_user.id, 'error_info') + "\n" + "Model returned an empty response."
+                    
+                    await safe_edit_message(bot, final_text, sent_message.chat.id, sent_message.message_id, "MarkdownV2")
                 except Exception as e:
                     if "parse markdown" in str(e).lower():
                         await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
                     else:
-                        print(f"Final message update error: {e}")
-                break
+                        logger.error(f"Final message update error: {e}", exc_info=True)
+                break # Success, exit loop
                 
             except Exception as e:
-                error_str = str(e)
-                error_msg = f"{get_user_text(message.from_user.id, 'error_info')}\n`{escape(error_str)}`\nSwitching key..."
-                await safe_edit_message(bot, error_msg, sent_message.chat.id, sent_message.message_id, "MarkdownV2")
+                error_str = repr(e)
+                logger.error(f"An error occurred during gemini_stream: {error_str}", exc_info=True)
+                error_msg = f"{get_user_text(message.from_user.id, 'error_info')}\nError: {error_str}\nSwitching key..."
+                await safe_edit_message(bot, error_msg, sent_message.chat.id, sent_message.message_id)
 
-                if switch_to_next_api_key():
+                async with api_key_lock:
+                    switched = switch_to_next_api_key()
+                
+                if switched:
                     retry_count += 1
+                    # Re-create chat object with the new client
                     system_prompt = get_system_prompt(message.from_user.id)
                     chat = client.aio.chats.create(
                         model=model_type,
@@ -350,9 +433,10 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
                     chat_dict[user_id_str] = chat
                 else:
                     await safe_edit_message(bot, get_user_text(message.from_user.id, 'all_api_quota_exhausted'), sent_message.chat.id, sent_message.message_id)
-                    break
+                    break # No more keys to try
             
     except Exception as e:
+        logger.error("An unhandled error occurred in gemini_stream", exc_info=True)
         error_details = f"{error_info}\nError details: {str(e)}"
         if sent_message:
             await safe_edit_message(bot, error_details, sent_message.chat.id, sent_message.message_id)
@@ -360,14 +444,16 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
             await bot.reply_to(message, error_details)
 
 async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes):
-    if client is None:
-        await bot.reply_to(message, get_user_text(message.from_user.id, "api_key_list_empty"))
-        return
+    async with api_key_lock:
+        if client is None:
+            await bot.reply_to(message, get_user_text(message.from_user.id, "api_key_list_empty") )
+            return
     
     sent_message = await bot.reply_to(message, download_pic_notify)
     
+    max_retries = len(api_keys)
     retry_count = 0
-    while retry_count < len(api_keys):
+    while retry_count < max_retries:
         try:
             image = Image.open(io.BytesIO(photo_file))
             buffer = io.BytesIO()
@@ -399,11 +485,15 @@ async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes)
             break
 
         except Exception as e:
-            error_str = str(e)
-            error_msg = f"{get_user_text(message.from_user.id, 'error_info')}\n`{escape(error_str)}`\nSwitching key..."
-            await safe_edit_message(bot, error_msg, sent_message.chat.id, sent_message.message_id, "MarkdownV2")
+            error_str = repr(e)
+            logger.error(f"An error occurred during gemini_edit: {error_str}", exc_info=True)
+            error_msg = f"{get_user_text(message.from_user.id, 'error_info')}\nError: {error_str}\nSwitching key..."
+            await safe_edit_message(bot, error_msg, sent_message.chat.id, sent_message.message_id)
 
-            if switch_to_next_api_key():
+            async with api_key_lock:
+                switched = switch_to_next_api_key()
+
+            if switched:
                 retry_count += 1
             else:
                 await safe_edit_message(bot, get_user_text(message.from_user.id, 'all_api_quota_exhausted'), sent_message.chat.id, sent_message.message_id)
@@ -412,9 +502,10 @@ async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes)
 async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: bytes, prompt: str = ""):
     sent_message = None
     try:
-        if client is None:
-            await bot.reply_to(message, get_user_text(message.from_user.id, "api_key_list_empty"))
-            return
+        async with api_key_lock:
+            if client is None:
+                await bot.reply_to(message, get_user_text(message.from_user.id, "api_key_list_empty") )
+                return
             
         sent_message = await bot.reply_to(message, download_pic_notify)
         lang = get_user_lang(message.from_user.id)
@@ -422,15 +513,15 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
         if lang == "zh" and "用中文回复" not in prompt: prompt += "，请用中文回复"
         if not prompt: prompt = "描述这张图片" if lang == "zh" else "Describe this image"
 
+        max_retries = len(api_keys)
         retry_count = 0
-        while retry_count < len(api_keys):
+        while retry_count < max_retries:
             try:
                 user_id = str(message.from_user.id)
                 is_model_1_default = default_model_dict.get(user_id, True)
                 active_chat_dict = gemini_chat_dict if is_model_1_default else gemini_pro_chat_dict
                 current_model_name = model_1 if is_model_1_default else model_2
                 
-                # Corrected image processing
                 image = Image.open(io.BytesIO(photo_file))
                 if image.mode != 'RGB':
                     image = image.convert('RGB')
@@ -458,6 +549,7 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
                 last_update = time.time()
                 update_interval = conf["streaming_update_interval"]
                 
+                # --- FIX: Use the correct variable 'response_stream' ---
                 async for chunk in response_stream:
                     if hasattr(chunk, 'text') and chunk.text:
                         full_response += chunk.text
@@ -468,21 +560,29 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
                                 if "parse markdown" in str(e).lower():
                                     await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
                                 elif "message is not modified" not in str(e).lower():
-                                    print(f"Image understanding stream error: {e}")
+                                    logger.warning(f"Image understanding stream error: {e}")
                             last_update = time.time()
                 
                 try:
-                    await safe_edit_message(bot, escape(full_response), sent_message.chat.id, sent_message.message_id, "MarkdownV2")
+                    final_text = escape(full_response)
+                    if not final_text.strip():
+                        final_text = get_user_text(message.from_user.id, 'error_info') + "\n" + "Model returned an empty response."
+
+                    await safe_edit_message(bot, final_text, sent_message.chat.id, sent_message.message_id, "MarkdownV2")
                 except Exception:
                     await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
                 break
             
             except Exception as e:
-                error_str = str(e)
-                error_msg = f"{get_user_text(message.from_user.id, 'error_info')}\n`{escape(error_str)}`\nSwitching key..."
-                await safe_edit_message(bot, error_msg, sent_message.chat.id, sent_message.message_id, "MarkdownV2")
+                error_str = repr(e)
+                logger.error(f"An error occurred during gemini_image_understand: {error_str}", exc_info=True)
+                error_msg = f"{get_user_text(message.from_user.id, 'error_info')}\nError: {error_str}\nSwitching key..."
+                await safe_edit_message(bot, error_msg, sent_message.chat.id, sent_message.message_id)
 
-                if switch_to_next_api_key():
+                async with api_key_lock:
+                    switched = switch_to_next_api_key()
+
+                if switched:
                     retry_count += 1
                     if user_id in active_chat_dict: del active_chat_dict[user_id]
                 else:
@@ -490,6 +590,7 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
                     break
                 
     except Exception as e:
+        logger.error("An unhandled error occurred in gemini_image_understand", exc_info=True)
         error_details = f"{error_info}\nError details: {str(e)}"
         if sent_message:
             await safe_edit_message(bot, error_details, sent_message.chat.id, sent_message.message_id)
@@ -499,14 +600,16 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
 async def gemini_draw(bot:TeleBot, message:Message, m:str):
     sent_message = None
     try:
-        if client is None:
-            await bot.reply_to(message, get_user_text(message.from_user.id, "api_key_list_empty"))
-            return
+        async with api_key_lock:
+            if client is None:
+                await bot.reply_to(message, get_user_text(message.from_user.id, "api_key_list_empty") )
+                return
             
-        sent_message = await bot.reply_to(message, get_user_text(message.from_user.id, "drawing_message"))
+        sent_message = await bot.reply_to(message, get_user_text(message.from_user.id, "drawing_message") )
             
+        max_retries = len(api_keys)
         retry_count = 0
-        while retry_count < len(api_keys):
+        while retry_count < max_retries:
             try:
                 response = await client.aio.models.generate_content(
                     model=model_3,
@@ -531,17 +634,22 @@ async def gemini_draw(bot:TeleBot, message:Message, m:str):
                 break
                 
             except Exception as e:
-                error_str = str(e)
-                error_msg = f"{get_user_text(message.from_user.id, 'error_info')}\n`{escape(error_str)}`\nSwitching key..."
-                await safe_edit_message(bot, error_msg, sent_message.chat.id, sent_message.message_id, "MarkdownV2")
+                error_str = repr(e)
+                logger.error(f"An error occurred during gemini_draw: {error_str}", exc_info=True)
+                error_msg = f"{get_user_text(message.from_user.id, 'error_info')}\nError: {error_str}\nSwitching key..."
+                await safe_edit_message(bot, error_msg, sent_message.chat.id, sent_message.message_id)
 
-                if switch_to_next_api_key():
+                async with api_key_lock:
+                    switched = switch_to_next_api_key()
+
+                if switched:
                     retry_count += 1
                 else:
                     await safe_edit_message(bot, get_user_text(message.from_user.id, 'all_api_quota_exhausted'), sent_message.chat.id, sent_message.message_id)
                     break
             
     except Exception as e:
+        logger.error("An unhandled error occurred in gemini_draw", exc_info=True)
         error_details = f"{error_info}\nError details: {str(e)}"
         if sent_message:
             await safe_edit_message(bot, error_details, sent_message.chat.id, sent_message.message_id)

@@ -1,13 +1,25 @@
 import argparse
 import asyncio
+import sys
+import os
+import json
+import logging
+
+# --- Logging Setup ---
+# Configure logging before importing other project modules to ensure they inherit the config
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - [%(name)s] - %(message)s',
+    stream=sys.stdout
+)
+
 import telebot
 from telebot.async_telebot import AsyncTeleBot
 import handlers
 from handlers import is_admin, load_authorized_users
 import config
-import sys
-import os
-import json
+
+logger = logging.getLogger(__name__)
 
 # --- Argument Parsing ---
 parser = argparse.ArgumentParser(description="Gemini Telegram Bot")
@@ -30,15 +42,15 @@ if options.gemini_key:
     if len(sys.argv) > 2:
         sys.argv[2] = options.gemini_key
 
-print("Arg parse done.")
+logger.info("Argument parsing done.")
 
 def initialize_users():
     """Initializes the user data file, adding admins if the file is new."""
     if not os.path.exists(config.USER_DATA_FILE):
-        print(f"User file {config.USER_DATA_FILE} not found, creating...")
+        logger.warning(f"User file {config.USER_DATA_FILE} not found, creating...")
         with open(config.USER_DATA_FILE, 'w') as f:
             json.dump(list(config.ADMIN_UID), f, indent=4)
-        print(f"Administrators {config.ADMIN_UID} have been added to the authorized list.")
+        logger.info(f"Administrators {config.ADMIN_UID} have been added to the authorized list.")
 
 initialize_users()
 
@@ -115,6 +127,10 @@ async def api_switch(message):
 async def api_check(message):
     await handlers.api_check_handler(message, bot)
 
+@bot.message_handler(commands=['api_clean'])
+async def api_clean(message):
+    await handlers.api_clean_handler(message, bot)
+
 @bot.message_handler(commands=['system'])
 async def system_prompt(message):
     await handlers.system_prompt_handler(message, bot)
@@ -136,8 +152,15 @@ async def system_show(message):
 async def photo_handler(message):
     await handlers.gemini_photo_handler(message, bot)
 
-@bot.message_handler(func=lambda message: message.chat.type == "private", content_types=['text'])
+@bot.message_handler(
+    func=lambda message: (
+        message.chat.type == "private" and
+        (not message.entities or not any(e.type == 'bot_command' for e in message.entities))
+    ),
+    content_types=['text']
+)
 async def private_text_handler(message):
+    logger.info(f"private_text_handler caught message: '{message.text}'")
     await handlers.gemini_private_handler(message, bot)
 
 async def main():
@@ -154,14 +177,14 @@ async def main():
                 await bot.set_my_commands(handlers.user_menu_zh, scope=telebot.types.BotCommandScopeChat(user_id), language_code='zh')
                 await bot.set_my_commands(handlers.user_menu_en, scope=telebot.types.BotCommandScopeChat(user_id), language_code='en')
         except Exception as e:
-            print(f"Failed to set commands for user {user_id}: {e}")
+            logger.error(f"Failed to set commands for user {user_id}: {e}")
 
     # Set a default menu for users who are not yet authorized
     await bot.set_my_commands(handlers.user_menu_zh, scope=telebot.types.BotCommandScopeDefault(), language_code='zh')
     await bot.set_my_commands(handlers.user_menu_en, scope=telebot.types.BotCommandScopeDefault(), language_code='en')
 
-    print("Bot init done.")
-    print("Starting Gemini_Telegram_Bot.")
+    logger.info("Bot init done.")
+    logger.info("Starting Gemini_Telegram_Bot.")
     await bot.polling(none_stop=True)
 
 if __name__ == '__main__':

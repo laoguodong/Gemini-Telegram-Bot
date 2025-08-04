@@ -4,19 +4,20 @@ A powerful and highly customizable Telegram bot that leverages Google's Gemini A
 
 ## ✨ Features
 
-- **Multi-Model Support**: Seamlessly switch and use different Gemini models (`gemini-2.5-pro`, `gemini-2.5-flash`, etc.).
+- **Multi-Model Support**: Seamlessly switch and use different Gemini models (uses `gemini-2.5-pro` and `gemini-2.5-flash` by default).
 - **Multimodal Interaction**:
   - **Text Conversation**: Engage in fluent, context-aware dialogues.
   - **Image Understanding**: Send a picture to ask questions or get descriptions.
-  - **Image Generation**: Create new images from text descriptions.
+  - **Image Generation**: Create new images from text descriptions (uses `gemini-2.0-flash-preview-image-generation`).
 - **Robust API Key Management**:
   - **Multiple Key Support**: Add multiple API keys.
   - **Automatic Failover**: Automatically switches to the next available key if the current one fails or runs out of quota.
   - **Dynamic Management**: Admins can dynamically add, remove, list, switch, and check keys via commands.
+  - **Smart Cleanup**: Automatically detect and remove all invalid API keys with a single command.
 - **Advanced Admin Features**:
   - **User Authorization System**: Control who can use your bot.
   - **Custom System Prompts**: Set different roles or instructions for the bot on a per-user basis.
-  - **Key Status Check**: One-click command to check the status of all keys (Paid/Standard/Invalid).
+  - **Key Status Check**: One-click command to check the status of all keys (Paid/Standard/Invalid). The model for paid checks can be configured in `config.py`.
 - **User-Friendly**:
   - **Streaming Responses**: Typewriter effect for an enhanced interactive experience.
   - **Multi-Language Support**: Built-in support for English and Chinese.
@@ -43,14 +44,14 @@ pip install -r requirements.txt
 
 ### 3. Running the Bot
 
-Start the bot using command-line arguments:
+It is **highly recommended** to start the bot using command-line arguments to avoid hard-coding sensitive information:
 
 ```bash
 python main.py <YOUR_TG_BOT_TOKEN> <YOUR_GEMINI_API_KEY> --admin-uid <YOUR_ADMIN_UID>
 ```
 
 - `<YOUR_TG_BOT_TOKEN>`: Your Telegram bot token.
-- `<YOUR_GEMINI_API_KEY>`: Your Google Gemini API key. You can provide one or more keys, separated by commas.
+- `<YOUR_GEMINI_API_KEY>`: Your Google Gemini API key. You can provide one or more keys, separated by commas `,`.
 - `<YOUR_ADMIN_UID>`: Your Telegram User ID. You can provide one or more admin UIDs, separated by spaces.
 
 **Example:**
@@ -89,6 +90,7 @@ python main.py 123456:ABC-DEF your_api_key_1,your_api_key_2 --admin-uid 12345678
 - `/api_list` - List all added API keys with their indices.
 - `/api_switch <index>` - Manually switch to the API key at the specified index.
 - `/api_check` - Check the status of all keys and classify them as Paid, Standard, or Invalid.
+- `/api_clean` - Automatically detect and remove all invalid API keys.
 
 ## 🐳 Docker Deployment
 
@@ -101,8 +103,8 @@ docker run -d --name gemini-bot \
   -e TELEGRAM_BOT_API_KEY="<YOUR_TG_BOT_TOKEN>" \
   -e GEMINI_API_KEYS="<YOUR_GEMINI_API_KEY>" \
   -e ADMIN_UIDS="<YOUR_ADMIN_UID>" \
+  --restart always \
   gemini_tg_bot
 ```
 
 **Note**: When using Docker, enclose the environment variable values in quotes. For multiple API keys, separate them with commas. For multiple admin UIDs, separate them with spaces.
-
