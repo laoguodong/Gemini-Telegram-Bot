@@ -17,7 +17,7 @@ A powerful and highly customizable Telegram bot that leverages Google's Gemini A
 - **Advanced Admin Features**:
   - **User Authorization System**: Control who can use your bot.
   - **Custom System Prompts**: Set different roles or instructions for the bot on a per-user basis.
-  - **Key Status Check**: One-click command to check the status of all keys (Paid/Standard/Invalid). The model for paid checks can be configured in `config.py`.
+  - **Key Status Check**: One-click command to check the status of all keys (Paid/Standard/Invalid). The model for paid checks can be configured via `paid_model_for_check` in `config.py`.
 - **User-Friendly**:
   - **Streaming Responses**: Typewriter effect for an enhanced interactive experience.
   - **Multi-Language Support**: Built-in support for English and Chinese.

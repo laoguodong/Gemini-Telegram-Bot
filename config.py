@@ -56,6 +56,7 @@ lang_settings = {
         "api_cleaning_message": "正在清理无效密钥，请稍候...",
         "api_clean_results_title": "密钥清理完成",
         "api_clean_removed_keys": "已成功删除以下无效密钥：",
+        "api_clean_no_invalid_keys": "✅ 未发现可清理的无效密钥。",
         "api_clean_post_summary_title": "📊 剩余密钥状态："
     },
     "en": {
@@ -109,6 +110,7 @@ lang_settings = {
         "api_cleaning_message": "Cleaning up invalid keys, please wait...",
         "api_clean_results_title": "Key cleanup complete",
         "api_clean_removed_keys": "The following invalid keys have been successfully removed:",
+        "api_clean_no_invalid_keys": "✅ No invalid keys found to remove.",
         "api_clean_post_summary_title": "📊 Status of Remaining Keys:"
     }
 }
