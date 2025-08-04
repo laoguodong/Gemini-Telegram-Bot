@@ -115,12 +115,16 @@ lang_settings = {
 
 conf = {
     "default_language": "zh",
-    "model_1": "gemini-2.5-pro",
-    "model_2": "gemini-2.5-flash",  
-    "model_3": "gemini-2.0-flash-preview-image-generation",
-    "paid_model_for_check": "gemini-2.5-pro-preview-05-06",
+    "text_model_pro": "gemini-2.5-pro",
+    "text_model_flash": "gemini-2.5-flash",
+    "image_model": "gemini-2.0-flash-preview-image-generation",
+    "api_check_model": "gemini-2.5-pro",
     "streaming_update_interval": 0.5,
-    "api_check_concurrency": 10
+    "api_check_concurrency": 10,
+    "model_1": "gemini-2.5-pro",
+    "model_2": "gemini-2.5-flash",
+    "model_3": "gemini-2.0-flash-preview-image-generation",
+    "paid_model_for_check": "gemini-2.5-pro-preview-05-06"
 }
 
 # 从默认语言中获取提示文案
@@ -145,10 +149,6 @@ safety_settings = [
         category="HARM_CATEGORY_DANGEROUS_CONTENT",
         threshold="BLOCK_NONE",
     ),
-    types.SafetySetting(
-        category="HARM_CATEGORY_CIVIC_INTEGRITY",
-        threshold="BLOCK_NONE",
-    )
 ]
 
 # 为文本模型创建配置

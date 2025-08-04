@@ -4,19 +4,20 @@
 
 ## ✨ 功能特性
 
-- **多模型支持**: 无缝切换和使用不同的 Gemini 模型 (`gemini-2.5-pro`, `gemini-2.5-flash`, 等)。
+- **多模型支持**: 无缝切换和使用不同的 Gemini 模型 (默认使用 `gemini-2.5-pro` 和 `gemini-2.5-flash`)。
 - **多模态交互**:
   - **文本对话**: 进行流畅、支持上下文的对话。
   - **图像理解**: 发送图片进行提问或描述。
-  - **图像生成**: 根据文本描述创作新图片。
+  - **图像生成**: 根据文本描述创作新图片 (使用 `gemini-2.0-flash-preview-image-generation`)。
 - **健壮的 API 密钥管理**:
   - **多密钥支持**: 可添加多个 API 密钥。
   - **自动故障切换**: 当前密钥失效或额度用尽时，自动切换到下一个可用密钥。
   - **动态管理**: 管理员可通过命令动态添加、删除、列出、切换和检查密钥。
+  - **智能清理**: 一键清理所有已失效的 API 密钥。
 - **高级管理员功能**:
   - **用户授权系统**: 控制谁可以使用您的机器人。
   - **自定义系统提示词**: 为每个用户设置不同的机器人角色或指令。
-  - **密钥状态检查**: 一键检查所有密钥的状态（付费/普通/失效）。
+  - **密钥状态检查**: 一键检查所有密钥的状态（付费/普通/失效），可通过 `config.py` 配置付费模型检查。
 - **用户友好**:
   - **流式响应**: 打字机效果，提升交互体验。
   - **多语言支持**: 内置中文和英文界面。
@@ -43,14 +44,14 @@ pip install -r requirements.txt
 
 ### 3. 运行
 
-通过命令行参数启动机器人：
+**强烈建议**通过命令行参数启动机器人，以避免在代码中硬编码敏感信息：
 
 ```bash
 python main.py <你的TG_BOT_TOKEN> <你的GEMINI_API_KEY> --admin-uid <你的管理员UID>
 ```
 
 - `<你的TG_BOT_TOKEN>`: 你的 Telegram 机器人令牌。
-- `<你的GEMINI_API_KEY>`: 你的 Google Gemini API 密钥。你可以提供一个或多个密钥，用逗号分隔。
+- `<你的GEMINI_API_KEY>`: 你的 Google Gemini API 密钥。你可以提供一个或多个密钥，用逗号`,`分隔。
 - `<你的管理员UID>`: 你的 Telegram User ID。你可以提供一个或多个管理员UID，用空格分隔。
 
 **示例:**
@@ -89,6 +90,7 @@ python main.py 123456:ABC-DEF your_api_key_1,your_api_key_2 --admin-uid 12345678
 - `/api_list` - 列出所有已添加的API密钥及其索引。
 - `/api_switch <index>` - 手动切换到指定索引的API密钥。
 - `/api_check` - 检查所有密钥的状态，并将其分类为付费、普通或失效。
+- `/api_clean` - 自动检测并移除所有失效的API密钥。
 
 ## 🐳 Docker 部署
 
@@ -101,11 +103,9 @@ docker run -d --name gemini-bot \
   -e TELEGRAM_BOT_API_KEY="<你的TG_BOT_TOKEN>" \
   -e GEMINI_API_KEYS="<你的GEMINI_API_KEY>" \
   -e ADMIN_UIDS="<你的管理员UID>" \
+  --restart always \
   gemini_tg_bot
 ```
 
 **注意**: 在 Docker 中，环境变量的值应该用引号括起来。多个 API 密钥请用逗号分隔，多个管理员 UID 请用空格分隔。
 
-
-
-```

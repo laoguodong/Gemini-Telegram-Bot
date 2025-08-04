@@ -7,6 +7,7 @@ from functools import wraps
 import config
 from config import conf, lang_settings, USER_DATA_FILE
 import gemini
+import time
 import re
 import logging
 
@@ -17,7 +18,7 @@ from gemini import (
     get_user_text, get_user_lang, switch_language, get_language,
     set_system_prompt, delete_system_prompt, reset_system_prompt, show_system_prompt,
     add_api_key, remove_api_key, list_api_keys, set_current_api_key, get_current_api_key,
-    remove_all_api_keys, unified_api_key_check
+    remove_all_api_keys, unified_api_key_check, api_key_lock
 )
 
 # --- Menu Definitions ---
@@ -311,25 +312,26 @@ async def api_key_add_handler(message: Message, bot: TeleBot):
     try:
         command_parts = message.text.strip().split(maxsplit=1)
         if len(command_parts) < 2:
-            await bot.reply_to(message, get_user_text(user_id, "api_key_add_help"))
+            await bot.reply_to(message, get_user_text(user_id, "api_key_add_help") )
             return
             
         keys_text = command_parts[1]
         keys = [key.strip() for key in re.split(r'[\s,]+', keys_text) if key.strip()]
 
         if not keys:
-            await bot.reply_to(message, get_user_text(user_id, "api_key_add_help"))
+            await bot.reply_to(message, get_user_text(user_id, "api_key_add_help") )
             return
 
         added_count, exist_count, invalid_count = 0, 0, 0
-        for key in keys:
-            if gemini.validate_api_key_format(key):
-                if gemini.add_api_key(key):
-                    added_count += 1
+        async with api_key_lock:
+            for key in keys:
+                if gemini.validate_api_key_format(key):
+                    if gemini.add_api_key(key):
+                        added_count += 1
+                    else:
+                        exist_count += 1
                 else:
-                    exist_count += 1
-            else:
-                invalid_count += 1
+                    invalid_count += 1
         
         response = f"{get_user_text(user_id, 'api_key_bulk_add_summary')}\n"
         if added_count > 0: response += f"✅ {added_count} {get_user_text(user_id, 'api_key_added_count')}\n"
@@ -340,7 +342,7 @@ async def api_key_add_handler(message: Message, bot: TeleBot):
 
     except Exception:
         logger.error("An error occurred in api_key_add_handler", exc_info=True)
-        await bot.reply_to(message, get_user_text(user_id, "api_key_add_help"))
+        await bot.reply_to(message, get_user_text(user_id, "api_key_add_help") )
 
 @admin_only
 async def api_key_remove_handler(message: Message, bot: TeleBot):
@@ -349,24 +351,26 @@ async def api_key_remove_handler(message: Message, bot: TeleBot):
     try:
         arg = message.text.strip().split(maxsplit=1)[1].strip().lower()
 
-        if arg == 'all':
-            remove_all_api_keys()
-            await bot.reply_to(message, get_user_text(user_id, "api_key_all_removed"))
-            return
+        async with api_key_lock:
+            if arg == 'all':
+                remove_all_api_keys()
+                await bot.reply_to(message, get_user_text(user_id, "api_key_all_removed") )
+                return
 
-        try:
-            index = int(arg)
-            if 0 <= index < len(gemini.api_keys):
-                key_to_remove = gemini.api_keys[index]
-                if gemini.remove_api_key(key_to_remove):
-                    await bot.reply_to(message, get_user_text(user_id, "api_key_removed"))
+            try:
+                index = int(arg)
+                if 0 <= index < len(gemini.api_keys):
+                    key_to_remove = gemini.api_keys[index]
+                    if gemini.remove_api_key(key_to_remove):
+                        await bot.reply_to(message, get_user_text(user_id, "api_key_removed") )
+                    else:
+                        # This case should ideally not be reached with the new logic, but kept for safety
+                        await bot.reply_to(message, get_user_text(user_id, "api_key_not_found") )
                 else:
-                    await bot.reply_to(message, get_user_text(user_id, "api_key_not_found"))
-            else:
-                await bot.reply_to(message, get_user_text(user_id, "api_key_switch_invalid") )
-            return
-        except ValueError:
-            pass
+                    await bot.reply_to(message, get_user_text(user_id, "api_key_switch_invalid") )
+                return
+            except (ValueError, IndexError):
+                pass
         
         await bot.reply_to(message, get_user_text(user_id, "api_key_remove_help") )
 
@@ -379,7 +383,9 @@ async def api_key_remove_handler(message: Message, bot: TeleBot):
 @admin_only
 async def api_key_list_handler(message: Message, bot: TeleBot):
     logger.info(f"Command /api_list received from admin_id: {message.from_user.id}")
-    keys = list_api_keys()
+    async with api_key_lock:
+        keys = list_api_keys()
+    
     if not keys:
         await bot.reply_to(message, get_user_text(message.from_user.id, "api_key_list_empty") )
         return
@@ -396,7 +402,10 @@ async def api_key_switch_handler(message: Message, bot: TeleBot):
     try:
         index_to_switch = int(message.text.split(maxsplit=1)[1].strip())
         
-        if gemini.set_current_api_key(index_to_switch):
+        async with api_key_lock:
+            switched = gemini.set_current_api_key(index_to_switch)
+
+        if switched:
             await bot.reply_to(message, f"{get_user_text(message.from_user.id, 'api_key_switched')} `{index_to_switch}`", parse_mode="MarkdownV2")
         else:
             await bot.reply_to(message, get_user_text(message.from_user.id, "api_key_switch_invalid") )
@@ -410,39 +419,42 @@ async def api_check_handler(message: Message, bot: TeleBot):
     user_id = message.from_user.id
     sent_message = await bot.reply_to(message, get_user_text(user_id, "api_checking_message") )
     
-    paid_model = conf.get("paid_model_for_check")
+    paid_model = conf.get("paid_model_for_check") or conf.get("model_1")
     standard_model = conf.get("model_1")
-    paid_keys, standard_keys, rate_limited_keys, invalid_keys = await unified_api_key_check(paid_model, standard_model)
     
-    title = escape(get_user_text(user_id, 'api_check_results_title'))
-    paid_title = escape(f"{get_user_text(user_id, 'api_check_paid_keys')} ({len(paid_keys)})")
-    standard_title = escape(f"{get_user_text(user_id, 'api_check_standard_keys')} ({len(standard_keys)})")
-    rate_limited_title = escape(f"{get_user_text(user_id, 'api_check_rate_limited_keys')} ({len(rate_limited_keys)})")
-    invalid_title = escape(f"{get_user_text(user_id, 'api_check_invalid_keys')} ({len(invalid_keys)})")
+    async with api_key_lock:
+        paid_keys, standard_keys, rate_limited_keys, invalid_keys = await unified_api_key_check(paid_model, standard_model)
+    
+    title = get_user_text(user_id, 'api_check_results_title')
+    paid_title = f"{get_user_text(user_id, 'api_check_paid_keys')} ({len(paid_keys)})"
+    standard_title = f"{get_user_text(user_id, 'api_check_standard_keys')} ({len(standard_keys)})"
+    rate_limited_title = f"{get_user_text(user_id, 'api_check_rate_limited_keys')} ({len(rate_limited_keys)})"
+    invalid_title = f"{get_user_text(user_id, 'api_check_invalid_keys')} ({len(invalid_keys)})"
 
-    response = f"*{title}*\n\n"
+    response_lines = [f"{title}\n"]
     
-    response += f"*{paid_title}*\n"
+    response_lines.append(paid_title)
     if paid_keys:
         for index, key in paid_keys:
-            response += f"`{index}`: `{escape(key)}`\n"
+            response_lines.append(f"{index}: {key}")
             
-    response += f"\n*{standard_title}*\n"
+    response_lines.append(f"\n{standard_title}")
     if standard_keys:
         for index, key in standard_keys:
-            response += f"`{index}`: `{escape(key)}`\n"
+            response_lines.append(f"{index}: {key}")
 
-    response += f"\n*{rate_limited_title}*\n"
+    response_lines.append(f"\n{rate_limited_title}")
     if rate_limited_keys:
         for index, key in rate_limited_keys:
-            response += f"`{index}`: `{escape(key)}`\n"
+            response_lines.append(f"{index}: {key}")
             
-    response += f"\n*{invalid_title}*\n"
+    response_lines.append(f"\n{invalid_title}")
     if invalid_keys:
         for index, key in invalid_keys:
-            response += f"`{index}`: `{escape(key)}`\n"
+            response_lines.append(f"{index}: {key}")
             
-    await bot.edit_message_text(response, sent_message.chat.id, sent_message.message_id, parse_mode="MarkdownV2")
+    response = "\n".join(response_lines)
+    await bot.edit_message_text(response, sent_message.chat.id, sent_message.message_id)
 
 @admin_only
 async def api_clean_handler(message: Message, bot: TeleBot):
@@ -451,83 +463,101 @@ async def api_clean_handler(message: Message, bot: TeleBot):
     sent_message = await bot.reply_to(message, get_user_text(user_id, "api_cleaning_message"))
 
     try:
-        paid_model = conf.get("paid_model_for_check")
+        paid_model = conf.get("paid_model_for_check") or conf.get("model_1")
         standard_model = conf.get("model_1")
         
-        # Get initial status
-        _, _, _, invalid_keys = await unified_api_key_check(paid_model, standard_model)
-        
-        # --- Build the response as a list of plain strings ---
-        response_lines = []
+        async with api_key_lock:
+            _, _, _, invalid_keys_with_indices = await unified_api_key_check(paid_model, standard_model)
+            
+            removed_keys_info = []
+            if invalid_keys_with_indices:
+                keys_to_remove = [key for _, key in invalid_keys_with_indices]
+                for key in keys_to_remove:
+                    if gemini.remove_api_key(key):
+                        removed_keys_info.append(key)
 
-        # Part 1: Removal Report
-        response_lines.append(f"*{get_user_text(user_id, 'api_clean_results_title')}*")
-        response_lines.append("") # Newline
+            response_lines = []
 
-        removed_keys_info = []
-        if invalid_keys:
-            keys_to_remove = [key for _, key in invalid_keys]
-            for key in keys_to_remove:
-                if gemini.remove_api_key(key):
-                    removed_keys_info.append(key)
+            response_lines.append(get_user_text(user_id, 'api_clean_results_title'))
+            response_lines.append("")
 
-        if not removed_keys_info:
-            response_lines.append("✅ No invalid keys found to remove.")
-        else:
-            response_lines.append(f"*{get_user_text(user_id, 'api_clean_removed_keys')}*")
-            for key in removed_keys_info:
-                response_lines.append(f"  - `{escape(key)}`")
-        response_lines.append("") # Newline
+            if not removed_keys_info:
+                response_lines.append("✅ No invalid keys found to remove.")
+            else:
+                response_lines.append(get_user_text(user_id, 'api_clean_removed_keys'))
+                for key in removed_keys_info:
+                    response_lines.append(f"  - {key}")
+            response_lines.append("")
 
-        # Part 2: Status of Remaining Keys
-        response_lines.append("*" + get_user_text(user_id, 'api_clean_post_summary_title') + "*")
-        response_lines.append("")
+            response_lines.append(get_user_text(user_id, 'api_clean_post_summary_title'))
+            response_lines.append("")
 
-        (
-            remaining_paid,
-            remaining_standard,
-            remaining_rate_limited,
-            _,
-        ) = await unified_api_key_check(paid_model, standard_model)
+            (
+                remaining_paid,
+                remaining_standard,
+                remaining_rate_limited,
+                _,
+            ) = await unified_api_key_check(paid_model, standard_model)
 
-        # Paid Keys
-        response_lines.append(f"*{get_user_text(user_id, 'api_check_paid_keys')} ({len(remaining_paid)})*")
+        response_lines.append(f"{get_user_text(user_id, 'api_check_paid_keys')} ({len(remaining_paid)})")
         if remaining_paid:
             for index, key in remaining_paid:
-                response_lines.append(f"`{index}`: `{escape(key)}`")
+                response_lines.append(f"{index}: {key}")
         
-        # Standard Keys
         response_lines.append("")
-        response_lines.append(f"*{get_user_text(user_id, 'api_check_standard_keys')} ({len(remaining_standard)})*")
+        response_lines.append(f"{get_user_text(user_id, 'api_check_standard_keys')} ({len(remaining_standard)})")
         if remaining_standard:
             for index, key in remaining_standard:
-                response_lines.append(f"`{index}`: `{escape(key)}`")
+                response_lines.append(f"{index}: {key}")
 
-        # Rate Limited Keys
         response_lines.append("")
-        response_lines.append(f"*{get_user_text(user_id, 'api_check_rate_limited_keys')} ({len(remaining_rate_limited)})*")
+        response_lines.append(f"{get_user_text(user_id, 'api_check_rate_limited_keys')} ({len(remaining_rate_limited)})")
         if remaining_rate_limited:
             for index, key in remaining_rate_limited:
-                response_lines.append(f"`{index}`: `{escape(key)}`")
+                response_lines.append(f"{index}: {key}")
         
-        # --- Join, Escape, and Send ---
         final_text = "\n".join(response_lines)
         
         await bot.edit_message_text(
-            text=escape(final_text), 
-            chat_id=sent_message.chat.id, 
-            message_id=sent_message.message_id,
-            parse_mode="MarkdownV2"
+            text=final_text, 
+            chat_id=sent_message.chat.id,
+            message_id=sent_message.message_id
         )
 
     except Exception as e:
         logger.error(f"A critical error occurred in api_clean_handler: {e}", exc_info=True)
         try:
             await bot.edit_message_text(
-                text=escape("A critical error occurred. Check the console logs for details."),
+                text="A critical error occurred. Check the console logs for details.",
                 chat_id=sent_message.chat.id,
-                message_id=sent_message.message_id,
-                parse_mode="MarkdownV2"
+                message_id=sent_message.message_id
             )
         except Exception as inner_e:
             logger.error(f"Failed to even send the error message in api_clean_handler: {inner_e}", exc_info=True)
+
+def register_handlers(bot: TeleBot):
+    bot.register_message_handler(start, commands=['start'], pass_bot=True)
+    bot.register_message_handler(language_switch_handler, commands=['lang'], pass_bot=True)
+    bot.register_message_handler(gemini_stream_handler, commands=['gemini'], pass_bot=True)
+    bot.register_message_handler(gemini_pro_stream_handler, commands=['gemini_pro'], pass_bot=True)
+    bot.register_message_handler(clear, commands=['clear'], pass_bot=True)
+    bot.register_message_handler(switch, commands=['switch'], pass_bot=True)
+    bot.register_message_handler(language_status_handler, commands=['language'], pass_bot=True)
+    bot.register_message_handler(draw_handler, commands=['draw'], pass_bot=True)
+    bot.register_message_handler(system_prompt_handler, commands=['system'], pass_bot=True)
+    bot.register_message_handler(system_prompt_clear_handler, commands=['system_clear'], pass_bot=True)
+    bot.register_message_handler(system_prompt_reset_handler, commands=['system_reset'], pass_bot=True)
+    bot.register_message_handler(system_prompt_show_handler, commands=['system_show'], pass_bot=True)
+    bot.register_message_handler(add_user, commands=['adduser'], pass_bot=True)
+    bot.register_message_handler(del_user, commands=['deluser'], pass_bot=True)
+    bot.register_message_handler(list_users, commands=['listusers'], pass_bot=True)
+    bot.register_message_handler(api_key_add_handler, commands=['api_add'], pass_bot=True)
+    bot.register_message_handler(api_key_remove_handler, commands=['api_remove'], pass_bot=True)
+    bot.register_message_handler(api_key_list_handler, commands=['api_list'], pass_bot=True)
+    bot.register_message_handler(api_key_switch_handler, commands=['api_switch'], pass_bot=True)
+    bot.register_message_handler(api_check_handler, commands=['api_check'], pass_bot=True)
+    bot.register_message_handler(api_clean_handler, commands=['api_clean'], pass_bot=True)
+    bot.register_message_handler(gemini_private_handler, content_types=['text'], pass_bot=True)
+    bot.register_message_handler(gemini_photo_handler, content_types=['photo'], pass_bot=True)
+
+    logger.info("All handlers registered.")
