@@ -1,110 +1,120 @@
 # Gemini-Telegram-Bot
 
-A powerful and highly customizable Telegram bot that leverages Google's Gemini API to provide advanced conversation, image understanding, and generation capabilities.
+A powerful Telegram bot based on Google Gemini AI, featuring multi-language support, multi-model switching, image understanding & generation, and advanced API key management.
 
-## ✨ Features
+[**中文文档 (Chinese Readme)**](README.md)
 
-- **Multi-Model Support**: Seamlessly switch and use different Gemini models (uses `gemini-2.5-pro` and `gemini-2.5-flash` by default).
-- **Multimodal Interaction**:
-  - **Text Conversation**: Engage in fluent, context-aware dialogues.
-  - **Image Understanding**: Send a picture to ask questions or get descriptions.
-  - **Image Generation**: Create new images from text descriptions (uses `gemini-2.0-flash-preview-image-generation`).
-- **Robust API Key Management**:
-  - **Multiple Key Support**: Add multiple API keys.
-  - **Automatic Failover**: Automatically switches to the next available key if the current one fails or runs out of quota.
-  - **Dynamic Management**: Admins can dynamically add, remove, list, switch, and check keys via commands.
-  - **Smart Cleanup**: Automatically detect and remove all invalid API keys with a single command.
-- **Advanced Admin Features**:
-  - **User Authorization System**: Control who can use your bot.
-  - **Custom System Prompts**: Set different roles or instructions for the bot on a per-user basis.
-  - **Key Status Check**: One-click command to check the status of all keys (Paid/Standard/Invalid). The model for paid checks can be configured via `paid_model_for_check` in `config.py`.
-- **User-Friendly**:
-  - **Streaming Responses**: Typewriter effect for an enhanced interactive experience.
-  - **Multi-Language Support**: Built-in support for English and Chinese.
-  - **Session Management**: Maintains separate conversation histories for each user.
+## ✨ Key Features
 
-## 🚀 Quick Start
+-   **🤖 Intelligent Chat**: Engage in natural, multi-turn conversations with Gemini models.
+-   **🌐 Multi-Language Support**: Switch between English and Chinese interfaces on the fly using the `/lang` command.
+-   **🔄 Multi-Model Switching**: Freely switch between `gemini-2.5-pro` and `gemini-2.5-flash` models.
+-   **🖼️ Image Understanding**: Can recognize and analyze the content of images you upload.
+-   **🎨 AI Drawing**: Generate high-quality images from text descriptions using the `/draw` command.
+-   **✏️ Image Editing**: Perform AI-assisted edits on uploaded images with the `/edit` command.
+-   **🔑 Advanced API Key Management**:
+    -   Add, remove, and switch between multiple Gemini API keys.
+    -   Built-in automatic API key rotation to handle rate limits gracefully.
+    -   Provides API key status checks and cleanup for invalid keys.
+-   **⚙️ Custom System Prompts**: Customize the bot's behavior and personality by setting, modifying, and managing system prompts.
 
-### 1. Prerequisites
+## 🚀 Installation
 
-- Python 3.9+
-- A Telegram Bot Token (get it from [@BotFather](https://t.me/BotFather))
-- A Google Gemini API Key (get it from [Google AI Studio](https://aistudio.google.com/app/apikey))
+### Method 1: Docker Deployment
 
-### 2. Installation
+1.  **Clone the repository**
+    ```bash
+    git clone https://github.com/laoguodong/Gemini-Telegram-Bot.git
+    ```
+2.  **Navigate to the directory**
+    ```bash
+    cd Gemini-Telegram-Bot
+    ```
+3.  **Build the Docker image**
+    ```bash
+    docker build -t gemini_tg_bot .
+    ```
+4.  **Run the container**
+    ```bash
+    docker run -d --restart=always \
+      --name gemini-bot \
+      -e TELEGRAM_BOT_API_KEY="YOUR_TELEGRAM_BOT_TOKEN" \
+      -e GEMINI_API_KEYS="YOUR_GEMINI_API_KEY" \
+      -e ADMIN_UIDS="YOUR_TELEGRAM_USER_ID" \
+      gemini_tg_bot
+    ```
+    **Note**:
+    -   Replace `"YOUR_..."` with your actual credentials.
+    -   For multiple Gemini keys, separate them with a comma `,`.
+    -   For multiple admin UIDs, separate them with a space.
 
-```bash
-# Clone the repository
-git clone https://github.com/wzpan/Gemini-Telegram-Bot.git
-cd Gemini-Telegram-Bot
 
-# Install dependencies
-pip install -r requirements.txt
-```
+### Method 2: Local Install
 
-### 3. Running the Bot
+1.  **Clone the repository and install dependencies**
+    ```bash
+    git clone https://github.com/laoguodong/Gemini-Telegram-Bot.git
+    cd Gemini-Telegram-Bot
+    pip install -r requirements.txt
+    ```
 
-It is **highly recommended** to start the bot using command-line arguments to avoid hard-coding sensitive information:
+2.  **Run the bot**
+    Execute the following command in the project's root directory:
+    ```bash
+    python main.py "YOUR_TELEGRAM_BOT_TOKEN" "YOUR_GEMINI_API_KEY" --admin-uid "YOUR_TELEGRAM_USER_ID"
+    ```
+    **Argument Details**:
+    -   `"YOUR_TELEGRAM_BOT_TOKEN"`: Your Telegram bot token from [@BotFather](https://t.me/BotFather).
+    -   `"YOUR_GEMINI_API_KEY"`: Your Gemini API key from [Google AI Studio](https://aistudio.google.com/app/apikey). For multiple keys, separate them with a comma `,`.
+    -   `"YOUR_TELEGRAM_USER_ID"`: Your personal Telegram User ID. For multiple admins, separate the UIDs with spaces.
 
-```bash
-python main.py <YOUR_TG_BOT_TOKEN> <YOUR_GEMINI_API_KEY> --admin-uid <YOUR_ADMIN_UID>
-```
+## 📖 Command Guide
 
-- `<YOUR_TG_BOT_TOKEN>`: Your Telegram bot token.
-- `<YOUR_GEMINI_API_KEY>`: Your Google Gemini API key. You can provide one or more keys, separated by commas `,`.
-- `<YOUR_ADMIN_UID>`: Your Telegram User ID. You can provide one or more admin UIDs, separated by spaces.
+### Basic Commands
 
-**Example:**
-```bash
-python main.py 123456:ABC-DEF your_api_key_1,your_api_key_2 --admin-uid 123456789 987654321
-```
+-   `/start` - Start the bot
+-   `/gemini` - Chat using the Gemini Flash model
+-   `/gemini_pro` - Chat using the Gemini Pro model
+-   `/draw` - AI drawing function
+-   `/edit` - (Reply to an image) Image editing function
+-   `/clear` - Clear the current conversation history
+-   `/switch` - Switch the default model for private chats
+-   `/lang` - Switch language (EN/ZH)
 
-## 🤖 Command Usage
+### Admin Commands
 
-### User Commands
+-   `/system` - Set a custom system prompt
+-   `/system_clear` - Delete the system prompt
+-   `/system_reset` - Reset the system prompt to default
+-   `/system_show` - Show the current system prompt
+-   `/api_add` - Add one or more new API keys (bulk support)
+-   `/api_remove` - Remove an existing API key
+-   `/api_list` - List all API keys
+-   `/api_switch` - Switch the currently active API key
+-   `/api_check` - Check the status of all keys (Paid/Standard/Invalid)
+-   `/api_clean` - Remove all invalid API keys
+-   `/adduser` - Authorize a new user
+-   `/deluser` - De-authorize a user
+-   `/listusers` - List all authorized users
 
-- `/start` - Start interacting with the bot.
-- `/gemini <prompt>` - Chat using the `gemini-2.5-flash` model.
-- `/gemini_pro <prompt>` - Chat using the `gemini-2.5-pro` model.
-- `/draw <prompt>` - Generate an image.
-- `/clear` - Clear your conversation history.
-- `/switch` - Switch the default model (`gemini-2.5-pro` or `gemini-2.5-flash`) in a private chat.
-- `/lang` - Switch the interface language (English/Chinese).
+## 🖼️ Usage Scenarios
 
-### 👑 Admin Commands
+-   **Private Chat**: Send text or images directly to the bot for conversation or analysis.
+-   **Group Chat**: Use `/gemini <your prompt>` or `/gemini_pro <your prompt>` to interact with the bot.
+-   **Image Processing**:
+    -   Send an image, and the AI will automatically describe its content.
+    -   Reply to an image with `/edit <description>` to modify it.
+    -   Use `/draw <description>` to create a new image.
 
-#### User Management
-- `/adduser <user_id>` - Authorize a new user.
-- `/deluser <user_id>` - De-authorize a user.
-- `/listusers` - List all authorized users.
+## ⚠️ Important Notes
 
-#### System Prompt
-- `/system <prompt>` - Set a custom system prompt for yourself.
-- `/system_clear` - Clear your system prompt.
-- `/system_reset` - Reset to the default system prompt.
-- `/system_show` - Show your current system prompt.
+-   Admin commands are only available in private chats with the bot.
+-   Ensure you provide at least one valid Gemini API key.
 
-#### API Key Management
-- `/api_add <keys...>` - Add one or more API keys in bulk, separated by spaces or newlines.
-- `/api_remove <index|all>` - Remove a key by its index, or use `all` to remove all keys.
-- `/api_list` - List all added API keys with their indices.
-- `/api_switch <index>` - Manually switch to the API key at the specified index.
-- `/api_check` - Check the status of all keys and classify them as Paid, Standard, or Invalid.
-- `/api_clean` - Automatically detect and remove all invalid API keys.
+## 🤝 Contributing
 
-## 🐳 Docker Deployment
+Contributions are welcome! If you have ideas, suggestions, or bug reports, please open an [Issue](https://github.com/laoguodong/Gemini-Telegram-Bot/issues) or a [Pull Request](https://github.com/laoguodong/Gemini-Telegram-Bot/pulls).
 
-```bash
-# Build the Docker image
-docker build -t gemini_tg_bot .
+## 🌟 Star History
 
-# Run the container
-docker run -d --name gemini-bot \
-  -e TELEGRAM_BOT_API_KEY="<YOUR_TG_BOT_TOKEN>" \
-  -e GEMINI_API_KEYS="<YOUR_GEMINI_API_KEY>" \
-  -e ADMIN_UIDS="<YOUR_ADMIN_UID>" \
-  --restart always \
-  gemini_tg_bot
-```
-
-**Note**: When using Docker, enclose the environment variable values in quotes. For multiple API keys, separate them with commas. For multiple admin UIDs, separate them with spaces.
+[![Star History Chart](https://api.star-history.com/svg?repos=laoguodong/Gemini-Telegram-Bot&type=Date)](https://star-history.com/#laoguodong/Gemini-Telegram-Bot&Date)
