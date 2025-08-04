@@ -1,110 +1,122 @@
 # Gemini-Telegram-Bot
 
-一个功能强大且可高度定制的 Telegram 机器人，它利用 Google 的 Gemini API 来提供先进的对话、图像理解和生成能力。
+一个功能强大的、基于 Google Gemini AI 的 Telegram 机器人，支持多语言、多模型切换、图像理解与生成、多 API 密钥管理等高级功能。
 
-## ✨ 功能特性
+[**English Document**](README_en.md)
 
-- **多模型支持**: 无缝切换和使用不同的 Gemini 模型 (默认使用 `gemini-2.5-pro` 和 `gemini-2.5-flash`)。
-- **多模态交互**:
-  - **文本对话**: 进行流畅、支持上下文的对话。
-  - **图像理解**: 发送图片进行提问或描述。
-  - **图像生成**: 根据文本描述创作新图片 (使用 `gemini-2.0-flash-preview-image-generation`)。
-- **健壮的 API 密钥管理**:
-  - **多密钥支持**: 可添加多个 API 密钥。
-  - **自动故障切换**: 当前密钥失效或额度用尽时，自动切换到下一个可用密钥。
-  - **动态管理**: 管理员可通过命令动态添加、删除、列出、切换和检查密钥。
-  - **智能清理**: 一键清理所有已失效的 API 密钥。
-- **高级管理员功能**:
-  - **用户授权系统**: 控制谁可以使用您的机器人。
-  - **自定义系统提示词**: 为每个用户设置不同的机器人角色或指令。
-  - **密钥状态检查**: 一键检查所有密钥的状态（付费/普通/失效）。用于付费检查的模型可在 `config.py` 的 `paid_model_for_check` 中配置。
-- **用户友好**:
-  - **流式响应**: 打字机效果，提升交互体验。
-  - **多语言支持**: 内置中文和英文界面。
-  - **会话管理**: 为每个用户维护独立的对话历史。
 
-## 🚀 快速开始
 
-### 1. 环境准备
+## ✨ 主要功能
 
-- Python 3.9+
-- Telegram Bot Token (从 [@BotFather](https://t.me/BotFather) 获取)
-- Google Gemini API Key (从 [Google AI Studio](https://aistudio.google.com/app/apikey) 获取)
+-   **🤖 智能对话**：支持与 Gemini 模型进行自然、连贯的多轮对话。
+-   **🌐 多语言支持**：内置中英文支持，可通过 `/lang` 命令随时切换界面语言。
+-   **🔄 多模型切换**：支持在 `gemini-2.5-pro` 和 `gemini-2.5-flash` 模型之间自由切换。
+-   **🖼️ 图像理解**：可以识别和分析用户上传的图片内容。
+-   **🎨 AI 绘图**：通过文字描述 (`/draw`) 生成高质量图像。
+-   **✏️ 图像编辑**：支持对上传的图片进行 AI 辅助编辑 (`/edit`)。
+-   **🔑 多 API 密钥管理**：
+    -   支持添加、移除和切换多个 Gemini API 密钥。
+    -   内置 API 密钥轮询和自动切换机制，从容应对速率限制。
+    -   提供 API 密钥状态检查和无效密钥清理功能。
+-   **⚙️ 自定义系统提示词**：可以为 AI 设置、修改和管理系统提示词，定制其行为和回复风格。
 
-### 2. 安装
+## 🚀 安装方法
 
-```bash
-# 克隆仓库
-git clone https://github.com/wzpan/Gemini-Telegram-Bot.git
-cd Gemini-Telegram-Bot
+### 方法一 (Docker 部署)
 
-# 安装依赖
-pip install -r requirements.txt
-```
+1.  **克隆项目**
+    ```bash
+    git clone https://github.com/laoguodong/Gemini-Telegram-Bot.git
+    ```
+2.  **进入项目目录**
+    ```bash
+    cd Gemini-Telegram-Bot
+    ```
+3.  **构建 Docker 镜像**
+    ```bash
+    docker build -t gemini_tg_bot .
+    ```
+4.  **运行容器**
+    ```bash
+    docker run -d --restart=always \
+      --name gemini-bot \
+      -e TELEGRAM_BOT_API_KEY="你的Telegram机器人API" \
+      -e GEMINI_API_KEYS="你的Gemini API密钥" \
+      -e ADMIN_UIDS="你的Telegram User ID" \
+      gemini_tg_bot
+    ```
+    **注意**: 
+    -   请将 "你的..." 替换为您的实际信息。
+    -   多个 Gemini API 密钥请用英文逗号 `,` 分隔。
+    -   多个管理员 ID 请用空格分隔。
 
-### 3. 运行
 
-**强烈建议**通过命令行参数启动机器人，以避免在代码中硬编码敏感信息：
+### 方法二 (本地运行)
 
-```bash
-python main.py <你的TG_BOT_TOKEN> <你的GEMINI_API_KEY> --admin-uid <你的管理员UID>
-```
+1.  **克隆项目并安装依赖**
+    ```bash
+    git clone https://github.com/laoguodong/Gemini-Telegram-Bot.git
+    cd Gemini-Telegram-Bot
+    pip install -r requirements.txt
+    ```
 
-- `<你的TG_BOT_TOKEN>`: 你的 Telegram 机器人令牌。
-- `<你的GEMINI_API_KEY>`: 你的 Google Gemini API 密钥。你可以提供一个或多个密钥，用逗号`,`分隔。
-- `<你的管理员UID>`: 你的 Telegram User ID。你可以提供一个或多个管理员UID，用空格分隔。
+2.  **运行机器人**
+    在项目根目录下，执行以下命令来启动机器人：
+    ```bash
+    python main.py "你的Bot API Key" "你的Gemini Key" --admin-uid "你的Telegram User ID"
+    ```
+    **参数说明**:
+    -   `"你的Bot API Key"`: 从 [@BotFather](https://t.me/BotFather) 获取的 Telegram Bot Token。
+    -   `"你的Gemini Key"`: 从 [Google AI Studio](https://aistudio.google.com/app/apikey) 获取的 Gemini API 密钥。如果你有多个，请用英文逗号 `,` 隔开。
+    -   `"你的Telegram User ID"`: 你的 Telegram User ID。如果你想设置多个管理员，请用空格隔开。
 
-**示例:**
-```bash
-python main.py 123456:ABC-DEF your_api_key_1,your_api_key_2 --admin-uid 123456789 987654321
-```
+## 📖 使用指南
 
-## 🤖 命令用法
+### 基本命令
 
-### 普通用户命令
+-   `/start` - 开始使用机器人
+-   `/gemini` - 使用 Gemini Flash 模型进行对话
+-   `/gemini_pro` - 使用 Gemini Pro 模型进行对话
+-   `/draw` - AI 绘图功能
+-   `/edit` - (回复图片使用) 图片编辑功能
+-   `/clear` - 清除当前对话历史
+-   `/switch` - 切换私聊时的默认对话模型
+-   `/lang` - 切换语言 (中/英)
 
-- `/start` - 开始使用机器人。
-- `/gemini <prompt>` - 使用 `gemini-2.5-flash` 模型进行对话。
-- `/gemini_pro <prompt>` - 使用 `gemini-2.5-pro` 模型进行对话。
-- `/draw <prompt>` - 生成一张图片。
-- `/clear` - 清除您的对话历史。
-- `/switch` - 在私聊中切换默认使用的模型 (`gemini-2.5-pro` 或 `gemini-2.5-flash`)。
-- `/lang` - 切换界面语言 (中文/英文)。
+### 管理员命令
 
-### 👑 管理员命令
+-   `/system` - 设置系统提示词
+-   `/system_clear` - 删除系统提示词
+-   `/system_reset` - 重置系统提示词为默认
+-   `/system_show` - 显示当前系统提示词
+-   `/api_add` - 添加新的 API 密钥 (支持批量)
+-   `/api_remove` - 删除现有 API 密钥
+-   `/api_list` - 查看所有 API 密钥列表
+-   `/api_switch` - 切换当前使用的 API 密钥
+-   `/api_check` - 检查所有密钥的状态 (付费/普通/失效)
+-   `/api_clean` - 清理所有无效的 API 密钥
+-   `/adduser` - 授权新用户
+-   `/deluser` - 删除用户
+-   `/listusers` - 列出所有授权用户
 
-#### 用户管理
-- `/adduser <user_id>` - 授权一个新用户。
-- `/deluser <user_id>` - 移除一个用户的授权。
-- `/listusers` - 列出所有已授权的用户。
+## 🖼️ 使用场景
 
-#### 系统提示词
-- `/system <prompt>` - 为您自己设置一个自定义的系统提示词。
-- `/system_clear` - 清除您的系统提示词。
-- `/system_reset` - 重置为默认的系统提示词。
-- `/system_show` - 查看当前的系统提示词。
+-   **私聊模式**：直接向机器人发送文字或图片即可进行智能对话和图像分析。
+-   **群组模式**：在群组中，使用 `/gemini <你的问题>` 或 `/gemini_pro <你的问题>` 来与机器人交互。
+-   **图像处理**：
+    -   直接发送图片，AI 会自动识别图片内容。
+    -   回复一张图片并使用 `/edit <你的描述>` 来编辑图像。
+    -   使用 `/draw <你的描述>` 来生成 AI 图像。
 
-#### API 密钥管理
-- `/api_add <keys...>` - 批量添加一个或多个API密钥，用空格或换行分隔。
-- `/api_remove <index|all>` - 按索引号删除一个密钥，或使用 `all` 删除所有密钥。
-- `/api_list` - 列出所有已添加的API密钥及其索引。
-- `/api_switch <index>` - 手动切换到指定索引的API密钥。
-- `/api_check` - 检查所有密钥的状态，并将其分类为付费、普通或失效。
-- `/api_clean` - 自动检测并移除所有失效的API密钥。
+## ⚠️ 注意事项
 
-## 🐳 Docker 部署
+-   管理员命令仅限管理员在私聊模式下使用。
+-   请确保至少提供一个有效的 Gemini API 密钥。
 
-```bash
-# 构建 Docker 镜像
-docker build -t gemini_tg_bot .
+## 🤝 贡献
 
-# 运行容器
-docker run -d --name gemini-bot \
-  -e TELEGRAM_BOT_API_KEY="<你的TG_BOT_TOKEN>" \
-  -e GEMINI_API_KEYS="<你的GEMINI_API_KEY>" \
-  -e ADMIN_UIDS="<你的管理员UID>" \
-  --restart always \
-  gemini_tg_bot
-```
+欢迎各种形式的贡献！如果你有任何想法、建议或发现 Bug，请随时提交 [Issues](https://github.com/laoguodong/Gemini-Telegram-Bot/issues) 或 [Pull Requests](https://github.com/laoguodong/Gemini-Telegram-Bot/pulls)。
 
-**注意**: 在 Docker 中，环境变量的值应该用引号括起来。多个 API 密钥请用逗号分隔，多个管理员 UID 请用空格分隔。
+## 🌟 Star 历史
+
+[![Star History Chart](https://api.star-history.com/svg?repos=laoguodong/Gemini-Telegram-Bot&type=Date)](https://star-history.com/#laoguodong/Gemini-Telegram-Bot&Date)
