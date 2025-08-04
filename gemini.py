@@ -24,17 +24,6 @@ api_key_lock = asyncio.Lock()
 api_keys = []
 current_api_key_index = 0
 
-if len(sys.argv) > 2:
-    input_keys = sys.argv[2]
-    input_keys = input_keys.replace('，', ',')
-    comma_split_keys = input_keys.split(',')
-    for item in comma_split_keys:
-        line_split_keys = item.splitlines()
-        for key in line_split_keys:
-            clean_key = key.strip()
-            if clean_key:
-                api_keys.append(clean_key)
-
 # Cooldown tracking for rate-limited keys
 api_key_cooldowns = {}
 
@@ -59,11 +48,17 @@ tools = [
 ]
 
 client = None
-if api_keys:
-    try:
-        client = genai.Client(api_key=api_keys[current_api_key_index])
-    except Exception as e:
-        logger.error(f"Error initializing client: {e}")
+
+async def initialize_client():
+    global client
+    if api_keys:
+        try:
+            client = genai.Client(api_key=api_keys[current_api_key_index])
+            logger.info("Gemini client initialized successfully.")
+        except Exception as e:
+            logger.error(f"Error initializing client: {e}")
+    else:
+        logger.warning("No API keys found. Client remains uninitialized.")
 
 async def unified_api_key_check(paid_model_name, standard_model_name):
     """
