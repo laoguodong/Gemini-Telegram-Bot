@@ -43,8 +43,8 @@ before_generate_info    =       conf["before_generate_info"]
 download_pic_notify     =       conf["download_pic_notify"]
 
 tools = [
-    Tool(google_search=GoogleSearch()),
-    Tool(url_context=UrlContext()),
+    Tool(google_search=GoogleSearch),
+    Tool(url_context=UrlContext),
 ]
 
 client = None
@@ -322,11 +322,15 @@ async def show_system_prompt(bot: TeleBot, message: Message):
 async def safe_edit_message(bot, text, chat_id, message_id, parse_mode=None):
     try:
         kwargs = {"text": text, "chat_id": chat_id, "message_id": message_id}
-        if parse_mode: kwargs["parse_mode"] = parse_mode
+        if parse_mode:
+            kwargs["parse_mode"] = parse_mode
         await bot.edit_message_text(**kwargs)
     except Exception as e:
+        # We only want to log errors that are not "message is not modified"
         if "message is not modified" not in str(e).lower():
-            logger.error(f"Error editing message: {e}", exc_info=True)
+            # Re-raise the exception to be handled by the calling function
+            raise e
+
 
 async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
     sent_message = None
@@ -378,20 +382,20 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
                             try:
                                 await safe_edit_message(bot, escape(full_response), sent_message.chat.id, sent_message.message_id, "MarkdownV2")
                             except Exception as e:
-                                if "parse markdown" in str(e).lower():
+                                if "parse" in str(e).lower() or "entity" in str(e).lower():
                                     await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
-                                elif "message is not modified" not in str(e).lower():
-                                    logger.warning(f"Error updating message: {e}")
+                                else:
+                                    logger.warning(f"Error updating message during stream: {e}")
                             last_update = time.time()
 
+                # Final message processing
                 try:
                     final_text = escape(full_response)
                     if not final_text.strip():
                         final_text = get_user_text(message.from_user.id, 'error_info') + "\n" + "Model returned an empty response."
-                    
                     await safe_edit_message(bot, final_text, sent_message.chat.id, sent_message.message_id, "MarkdownV2")
                 except Exception as e:
-                    if "parse markdown" in str(e).lower():
+                    if "parse" in str(e).lower() or "entity" in str(e).lower():
                         await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
                     else:
                         logger.error(f"Final message update error: {e}", exc_info=True)
@@ -463,7 +467,14 @@ async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes)
                 if part.inline_data: img = part.inline_data.data
             
             if img: await bot.send_photo(message.chat.id, io.BytesIO(img))
-            if text: await bot.send_message(message.chat.id, escape(text), parse_mode="MarkdownV2")
+            if text:
+                try:
+                    await bot.send_message(message.chat.id, escape(text), parse_mode="MarkdownV2")
+                except Exception as e:
+                    if "parse" in str(e).lower() or "entity" in str(e).lower():
+                        await bot.send_message(message.chat.id, text)
+                    else:
+                        raise e
             
             await bot.delete_message(chat_id=sent_message.chat.id, message_id=sent_message.message_id)
             break
@@ -541,20 +552,23 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
                             try:
                                 await safe_edit_message(bot, escape(full_response), sent_message.chat.id, sent_message.message_id, "MarkdownV2")
                             except Exception as e:
-                                if "parse markdown" in str(e).lower():
+                                if "parse" in str(e).lower() or "entity" in str(e).lower():
                                     await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
-                                elif "message is not modified" not in str(e).lower():
+                                else:
                                     logger.warning(f"Image understanding stream error: {e}")
                             last_update = time.time()
                 
+                # Final message processing
                 try:
                     final_text = escape(full_response)
                     if not final_text.strip():
                         final_text = get_user_text(message.from_user.id, 'error_info') + "\n" + "Model returned an empty response."
-
                     await safe_edit_message(bot, final_text, sent_message.chat.id, sent_message.message_id, "MarkdownV2")
-                except Exception:
-                    await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
+                except Exception as e:
+                    if "parse" in str(e).lower() or "entity" in str(e).lower():
+                        await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
+                    else:
+                        logger.error(f"Final image understanding message update error: {e}", exc_info=True)
                 break
             
             except Exception as e:
@@ -611,7 +625,14 @@ async def gemini_draw(bot:TeleBot, message:Message, m:str):
                     if part.inline_data: img = part.inline_data.data
                 
                 if img: await bot.send_photo(message.chat.id, io.BytesIO(img))
-                if text: await bot.send_message(message.chat.id, escape(text), parse_mode="MarkdownV2")
+                if text:
+                    try:
+                        await bot.send_message(message.chat.id, escape(text), parse_mode="MarkdownV2")
+                    except Exception as e:
+                        if "parse" in str(e).lower() or "entity" in str(e).lower():
+                            await bot.send_message(message.chat.id, text)
+                        else:
+                            raise e
                 
                 try: await bot.delete_message(chat_id=sent_message.chat.id, message_id=sent_message.message_id)
                 except Exception: pass
