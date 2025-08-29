@@ -119,7 +119,7 @@ conf = {
     "default_language": "zh",
     "text_model_pro": "gemini-2.5-pro",
     "text_model_flash": "gemini-2.5-flash",
-    "image_model": "gemini-2.0-flash-preview-image-generation",
+    "image_model": "gemini-2.5-flash-image-preview",
     "api_check_model": "gemini-2.5-pro",
     "streaming_update_interval": 0.5,
     "api_check_concurrency": 10,
