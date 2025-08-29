@@ -83,7 +83,7 @@ conf = {
     "default_language": "zh",  # 默认使用中文
     "model_1": "gemini-2.5-flash",
     "model_2": "gemini-2.5-pro",  
-    "model_3": "gemini-2.0-flash-preview-image-generation",  # for draw
+    "model_3": "gemini-2.5-flash-image-preview",  # for draw
     "streaming_update_interval": 0.5,  # Streaming answer update interval (seconds)
 }
 
