@@ -125,7 +125,7 @@ conf = {
     "api_check_concurrency": 10,
     "model_1": "gemini-2.5-pro",
     "model_2": "gemini-2.5-flash",
-    "model_3": "gemini-2.0-flash-preview-image-generation",
+    "model_3": "gemini-2.5-flash-image-preview",
     "paid_model_for_check": "gemini-2.5-pro-preview-05-06"
 }
 
