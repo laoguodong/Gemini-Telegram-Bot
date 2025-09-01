@@ -18,7 +18,9 @@ from gemini import (
     get_user_text, get_user_lang, switch_language, get_language,
     set_system_prompt, delete_system_prompt, reset_system_prompt, show_system_prompt,
     add_api_key, remove_api_key, list_api_keys, set_current_api_key, get_current_api_key,
-    remove_all_api_keys, unified_api_key_check, api_key_lock
+    remove_all_api_keys, unified_api_key_check, api_key_lock,
+    user_model_index_dict, CHAT_MODELS, get_current_chat_model,
+    switch_model_and_inherit_history, check_individual_keys
 )
 
 # --- Menu Definitions ---
@@ -134,7 +136,7 @@ def admin_only(func):
 
 gemini_chat_dict = gemini.gemini_chat_dict
 gemini_pro_chat_dict = gemini.gemini_pro_chat_dict
-default_model_dict = gemini.default_model_dict
+switchable_chat_sessions = gemini.switchable_chat_sessions
 gemini_draw_dict = gemini.gemini_draw_dict
 
 @authorized_user_only
@@ -186,6 +188,7 @@ async def clear(message: Message, bot: TeleBot) -> None:
     user_id_str = str(message.from_user.id)
     if user_id_str in gemini_chat_dict: del gemini_chat_dict[user_id_str]
     if user_id_str in gemini_pro_chat_dict: del gemini_pro_chat_dict[user_id_str]
+    if user_id_str in switchable_chat_sessions: del switchable_chat_sessions[user_id_str]
     if user_id_str in gemini_draw_dict: del gemini_draw_dict[user_id_str]
     await bot.reply_to(message, get_user_text(message.from_user.id, "history_cleared"))
 
@@ -195,10 +198,15 @@ async def switch(message: Message, bot: TeleBot) -> None:
     if message.chat.type != "private":
         await bot.reply_to(message, get_user_text(message.from_user.id, "private_chat_only"))
         return
-    user_id_str = str(message.from_user.id)
-    default_model_dict[user_id_str] = not default_model_dict.get(user_id_str, False)
-    model_name = conf['model_2'] if not default_model_dict.get(user_id_str) else conf['model_1']
-    await bot.reply_to(message, f"{get_user_text(user_id_str, 'now_using_model')} {model_name}")
+    
+    user_id = message.from_user.id
+    
+    try:
+        new_model_name = await switch_model_and_inherit_history(user_id)
+        await bot.reply_to(message, f"{get_user_text(user_id, 'now_using_model')} {new_model_name}")
+    except Exception as e:
+        logger.error(f"Error during model switch for user {user_id}: {e}", exc_info=True)
+        await bot.reply_to(message, get_user_text(user_id, "error_info"))
 
 @authorized_user_only
 async def language_status_handler(message: Message, bot: TeleBot) -> None:
@@ -209,9 +217,10 @@ async def language_status_handler(message: Message, bot: TeleBot) -> None:
 async def gemini_private_handler(message: Message, bot: TeleBot) -> None:
     logger.info(f"gemini_private_handler processing text from user_id: {message.from_user.id}")
     m = message.text.strip()
-    user_id_str = str(message.from_user.id)
-    model_to_use = conf['model_1'] if default_model_dict.get(user_id_str, True) else conf['model_2']
-    await gemini.gemini_stream(bot, message, m, model_to_use)
+    user_id = message.from_user.id
+    model_to_use = get_current_chat_model(user_id)
+    # Use the dedicated stream handler for switchable chats
+    await gemini.gemini_stream_switchable(bot, message, m, model_to_use)
 
 @authorized_user_only
 async def gemini_photo_handler(message: Message, bot: TeleBot) -> None:
@@ -417,44 +426,68 @@ async def api_key_switch_handler(message: Message, bot: TeleBot):
 async def api_check_handler(message: Message, bot: TeleBot):
     logger.info(f"Command /api_check received from admin_id: {message.from_user.id}")
     user_id = message.from_user.id
-    sent_message = await bot.reply_to(message, get_user_text(user_id, "api_checking_message") )
     
-    paid_model = conf.get("paid_model_for_check") or conf.get("model_1")
-    standard_model = conf.get("model_1")
-    
-    async with api_key_lock:
-        paid_keys, standard_keys, rate_limited_keys, invalid_keys = await unified_api_key_check(paid_model, standard_model)
-    
-    title = get_user_text(user_id, 'api_check_results_title')
-    paid_title = f"{get_user_text(user_id, 'api_check_paid_keys')} ({len(paid_keys)})"
-    standard_title = f"{get_user_text(user_id, 'api_check_standard_keys')} ({len(standard_keys)})"
-    rate_limited_title = f"{get_user_text(user_id, 'api_check_rate_limited_keys')} ({len(rate_limited_keys)})"
-    invalid_title = f"{get_user_text(user_id, 'api_check_invalid_keys')} ({len(invalid_keys)})"
+    try:
+        # Split the message to check for additional keys
+        command_parts = message.text.strip().split(maxsplit=1)
+        keys_to_check_from_message = []
+        
+        if len(command_parts) > 1:
+            # Keys are provided after the command
+            keys_text = command_parts[1]
+            keys_to_check_from_message = [key.strip() for key in re.split(r'[\s,]+', keys_text) if key.strip()]
 
-    response_lines = [f"{title}\n"]
-    
-    response_lines.append(paid_title)
-    if paid_keys:
-        for index, key in paid_keys:
-            response_lines.append(f"{index}: {key}")
-            
-    response_lines.append(f"\n{standard_title}")
-    if standard_keys:
-        for index, key in standard_keys:
-            response_lines.append(f"{index}: {key}")
+        sent_message = await bot.reply_to(message, get_user_text(user_id, "api_checking_message"))
+        
+        paid_model = conf.get("paid_model_for_check") or conf.get("model_1")
+        standard_model = conf.get("model_1")
+        
+        if keys_to_check_from_message:
+            # Case 1: Check keys provided in the message
+            paid_keys, standard_keys, rate_limited_keys, invalid_keys = await check_individual_keys(
+                keys_to_check_from_message, paid_model, standard_model
+            )
+            # For direct checks, we don't show rate-limited as a separate category to the user
+            standard_keys.extend(rate_limited_keys)
+        else:
+            # Case 2: No keys provided, check all stored keys (original functionality)
+            async with api_key_lock:
+                paid_keys, standard_keys, rate_limited_keys, invalid_keys = await unified_api_key_check(
+                    paid_model, standard_model
+                )
 
-    response_lines.append(f"\n{rate_limited_title}")
-    if rate_limited_keys:
-        for index, key in rate_limited_keys:
-            response_lines.append(f"{index}: {key}")
-            
-    response_lines.append(f"\n{invalid_title}")
-    if invalid_keys:
-        for index, key in invalid_keys:
-            response_lines.append(f"{index}: {key}")
-            
-    response = "\n".join(response_lines)
-    await bot.edit_message_text(response, sent_message.chat.id, sent_message.message_id)
+        # Formatting the response
+        title = get_user_text(user_id, 'api_check_results_title')
+        paid_title = f"{get_user_text(user_id, 'api_check_paid_keys')} ({len(paid_keys)})"
+        standard_title = f"{get_user_text(user_id, 'api_check_standard_keys')} ({len(standard_keys)})"
+        invalid_title = f"{get_user_text(user_id, 'api_check_invalid_keys')} ({len(invalid_keys)})"
+
+        response_lines = [f"{title}\n"]
+        
+        response_lines.append(paid_title)
+        if paid_keys:
+            for _, key in paid_keys: response_lines.append(key)
+                
+        response_lines.append(f"\n{standard_title}")
+        if standard_keys:
+            for _, key in standard_keys: response_lines.append(key)
+
+        if not keys_to_check_from_message and rate_limited_keys:
+             rate_limited_title = f"{get_user_text(user_id, 'api_check_rate_limited_keys')} ({len(rate_limited_keys)})"
+             response_lines.append(f"\n{rate_limited_title}")
+             for _, key in rate_limited_keys: response_lines.append(key)
+                
+        response_lines.append(f"\n{invalid_title}")
+        if invalid_keys:
+            for _, key in invalid_keys: response_lines.append(key)
+                
+        response = "\n".join(response_lines)
+        await bot.edit_message_text(response, sent_message.chat.id, sent_message.message_id)
+
+    except Exception as e:
+        logger.error(f"An error occurred in api_check_handler: {e}", exc_info=True)
+        await bot.reply_to(message, f"An error occurred: {e}")
+
 
 @admin_only
 async def api_clean_handler(message: Message, bot: TeleBot):

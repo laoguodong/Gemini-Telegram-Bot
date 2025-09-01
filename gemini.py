@@ -30,9 +30,13 @@ api_key_cooldowns = {}
 gemini_draw_dict = {}
 gemini_chat_dict = {}
 gemini_pro_chat_dict = {}
-default_model_dict = {}
+switchable_chat_sessions = {}
 user_language_dict = {}
 user_system_prompt_dict = {}
+user_model_index_dict = {}
+
+# List of keys for chat models available for switching
+CHAT_MODELS = ['model_1', 'model_2', 'paid_model_for_check']
 
 model_1                 =       conf["model_1"]
 model_2                 =       conf["model_2"]
@@ -60,27 +64,22 @@ async def initialize_client():
     else:
         logger.warning("No API keys found. Client remains uninitialized.")
 
-async def unified_api_key_check(paid_model_name, standard_model_name):
+async def check_individual_keys(keys_to_check, paid_model_name, standard_model_name):
     """
-    Checks all API keys and returns them classified with their original indices.
-    Categories: paid, standard, rate_limited, invalid
+    Checks a given list of API keys and returns them classified.
+    This is the core logic, accepting keys as a parameter.
     """
     semaphore = asyncio.Semaphore(conf.get("api_check_concurrency", 10))
 
     async def check_key(index, key):
-        # If the key is in cooldown, don't check it, just classify it as rate_limited
+        # This function remains the same as before
         if key in api_key_cooldowns and time.time() < api_key_cooldowns[key]:
             return "rate_limited", (index, key)
-        
-        # If cooldown has expired, remove it from the tracking dict
         if key in api_key_cooldowns:
             del api_key_cooldowns[key]
-
         async with semaphore:
             temp_client = genai.Client(api_key=key)
-            
             def get_cooldown_from_exc(e):
-                """Robustly parses retry-after from various exception types."""
                 if hasattr(e, "response") and hasattr(e.response, "headers"):
                     retry_after = e.response.headers.get("retry-after")
                     if retry_after and retry_after.isdigit():
@@ -94,19 +93,13 @@ async def unified_api_key_check(paid_model_name, standard_model_name):
                     if match:
                         return int(match.group(1))
                 return 60
-
-            # 1. Attempt to classify as PAID
             try:
                 if paid_model_name:
                     await temp_client.aio.models.generate_content(model=paid_model_name, contents="hi")
-                    logger.info(f"Key {index} ({key[:5]}...) is PAID.")
-                    return "paid", (index, key)
+                logger.info(f"Key {index} ({key[:5]}...) is PAID.")
+                return "paid", (index, key)
             except Exception:
-                # If paid check fails for ANY reason, just ignore and proceed to standard check.
-                # This is because a standard key will fail the paid check, but that doesn't mean it's invalid or rate-limited.
                 pass
-
-            # 2. Attempt to classify as STANDARD (baseline functionality)
             try:
                 await temp_client.aio.models.generate_content(model=standard_model_name, contents="hi")
                 logger.info(f"Key {index} ({key[:5]}...) is STANDARD.")
@@ -122,12 +115,9 @@ async def unified_api_key_check(paid_model_name, standard_model_name):
                     api_key_cooldowns[key] = time.time() + cooldown
                     logger.warning(f"Key {index} ({key[:5]}...) is RATE LIMITED (429). Cooldown set for {cooldown}s.")
                     return "rate_limited", (index, key)
-                
                 logger.error(f"Key {index} ({key[:5]}...) is INVALID. Reason: {type(e).__name__}")
                 return "invalid", (index, key)
 
-    # Create a copy of the keys to check to avoid race conditions if the list is modified elsewhere
-    keys_to_check = list(api_keys)
     tasks = [check_key(i, key) for i, key in enumerate(keys_to_check)]
     results = await asyncio.gather(*tasks)
 
@@ -138,7 +128,13 @@ async def unified_api_key_check(paid_model_name, standard_model_name):
 
     return paid_keys, standard_keys, rate_limited_keys, invalid_keys
 
-# The rest of the file remains the same...
+async def unified_api_key_check(paid_model_name, standard_model_name):
+    """
+    Checks all internally stored API keys. This function now calls the generic checker.
+    """
+    keys_to_check = list(api_keys)
+    return await check_individual_keys(keys_to_check, paid_model_name, standard_model_name)
+
 def get_current_api_key():
     if not api_keys:
         return None
@@ -174,6 +170,20 @@ def switch_to_next_api_key():
             continue # Try the next one
             
     return False
+
+def get_current_chat_model_key(user_id):
+    """Gets the key for the user's current chat model (e.g., 'model_1')."""
+    user_id_str = str(user_id)
+    model_index = user_model_index_dict.get(user_id_str, 0)
+    # Ensure index is valid, fall back to 0 if out of bounds
+    if not 0 <= model_index < len(CHAT_MODELS):
+        model_index = 0
+    return CHAT_MODELS[model_index]
+
+def get_current_chat_model(user_id):
+    """Gets the actual model name for the user's current chat model (e.g., 'gemini-pro')."""
+    model_key = get_current_chat_model_key(user_id)
+    return conf.get(model_key, conf['model_1']) # Fallback to model_1
 
 def validate_api_key_format(key):
     if not key or len(key) < 8:
@@ -297,6 +307,7 @@ async def set_system_prompt(bot: TeleBot, message: Message, prompt: str):
     user_system_prompt_dict[user_id_str] = prompt
     if user_id_str in gemini_chat_dict: del gemini_chat_dict[user_id_str]
     if user_id_str in gemini_pro_chat_dict: del gemini_pro_chat_dict[user_id_str]
+    if user_id_str in switchable_chat_sessions: del switchable_chat_sessions[user_id_str]
     confirmation_msg = f"{get_user_text(message.from_user.id, 'system_prompt_set')}\n{prompt}"
     await bot.reply_to(message, confirmation_msg)
 
@@ -305,6 +316,7 @@ async def delete_system_prompt(bot: TeleBot, message: Message):
     if user_id_str in user_system_prompt_dict: del user_system_prompt_dict[user_id_str]
     if user_id_str in gemini_chat_dict: del gemini_chat_dict[user_id_str]
     if user_id_str in gemini_pro_chat_dict: del gemini_pro_chat_dict[user_id_str]
+    if user_id_str in switchable_chat_sessions: del switchable_chat_sessions[user_id_str]
     await bot.reply_to(message, get_user_text(message.from_user.id, 'system_prompt_deleted'))
 
 async def reset_system_prompt(bot: TeleBot, message: Message):
@@ -312,6 +324,7 @@ async def reset_system_prompt(bot: TeleBot, message: Message):
     user_system_prompt_dict[user_id_str] = DEFAULT_SYSTEM_PROMPT
     if user_id_str in gemini_chat_dict: del gemini_chat_dict[user_id_str]
     if user_id_str in gemini_pro_chat_dict: del gemini_pro_chat_dict[user_id_str]
+    if user_id_str in switchable_chat_sessions: del switchable_chat_sessions[user_id_str]
     await bot.reply_to(message, get_user_text(message.from_user.id, 'system_prompt_reset'))
 
 async def show_system_prompt(bot: TeleBot, message: Message):
@@ -513,9 +526,15 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
         while retry_count < max_retries:
             try:
                 user_id = str(message.from_user.id)
-                is_model_1_default = default_model_dict.get(user_id, True)
-                active_chat_dict = gemini_chat_dict if is_model_1_default else gemini_pro_chat_dict
-                current_model_name = model_1 if is_model_1_default else model_2
+                current_model_name = get_current_chat_model(user_id)
+                # Determine the correct chat dictionary based on the model name
+                # This part is tricky as we now have more than two models.
+                # For simplicity, we can use a single chat dictionary or create a more dynamic system.
+                # Let's assume gemini_chat_dict for pro models and gemini_pro_chat_dict for flash, and default to pro.
+                if "flash" in current_model_name:
+                    active_chat_dict = gemini_pro_chat_dict
+                else:
+                    active_chat_dict = gemini_chat_dict
                 
                 image = Image.open(io.BytesIO(photo_file))
                 if image.mode != 'RGB':
@@ -655,6 +674,154 @@ async def gemini_draw(bot:TeleBot, message:Message, m:str):
             
     except Exception as e:
         logger.error("An unhandled error occurred in gemini_draw", exc_info=True)
+        error_details = f"{error_info}\nError details: {str(e)}"
+        if sent_message:
+            await safe_edit_message(bot, error_details, sent_message.chat.id, sent_message.message_id)
+        else:
+            await bot.reply_to(message, error_details)
+
+async def switch_model_and_inherit_history(user_id):
+    """
+    Switches the user's chat model to the next one in the list and
+    re-creates the chat session with the existing history.
+    """
+    global client
+    if not client:
+        raise ValueError("Gemini client is not initialized.")
+
+    user_id_str = str(user_id)
+    
+    # Get current model index and calculate the next one
+    current_index = user_model_index_dict.get(user_id_str, 0)
+    next_index = (current_index + 1) % len(CHAT_MODELS)
+    user_model_index_dict[user_id_str] = next_index
+    
+    new_model_key = CHAT_MODELS[next_index]
+    new_model_name = conf.get(new_model_key, conf['model_1'])
+
+    # Get history from the old chat, if it exists
+    history = []
+    if user_id_str in switchable_chat_sessions:
+        try:
+            # Accessing history might be complex depending on the library's async implementation
+            # Assuming a synchronous accessor for simplicity or that it's readily available
+            old_chat = switchable_chat_sessions[user_id_str]
+            if hasattr(old_chat, 'history'):
+                history = old_chat.history
+        except Exception as e:
+            logger.error(f"Could not retrieve history for user {user_id_str}: {e}")
+
+    # Create a new chat with the new model and the old history
+    system_prompt = get_system_prompt(user_id)
+    try:
+        new_chat = client.aio.chats.create(
+            model=new_model_name,
+            history=history,
+            config=types.GenerateContentConfig(system_instruction=system_prompt, tools=tools)
+        )
+        switchable_chat_sessions[user_id_str] = new_chat
+        logger.info(f"User {user_id_str} switched to model {new_model_name} inheriting {len(history)} messages.")
+    except Exception as e:
+        logger.error(f"Failed to create new chat for user {user_id_str} with model {new_model_name}: {e}")
+        # Optionally, revert the model switch if creation fails
+        user_model_index_dict[user_id_str] = current_index
+        raise  # Re-raise the exception to be handled by the caller
+
+    return new_model_name
+
+async def gemini_stream_switchable(bot:TeleBot, message:Message, m:str, model_type:str):
+    sent_message = None
+    try:
+        # Lock before checking for client to prevent race conditions
+        async with api_key_lock:
+            if client is None:
+                await bot.reply_to(message, get_user_text(message.from_user.id, "api_key_list_empty") )
+                return
+            
+        sent_message = await bot.reply_to(message, "🤖 Generating answers...")
+
+        chat_dict = switchable_chat_sessions
+        user_id_str = str(message.from_user.id)
+
+        # Initialize chat outside the retry loop but after the client check
+        if user_id_str not in chat_dict:
+            system_prompt = get_system_prompt(message.from_user.id)
+            try:
+                chat = client.aio.chats.create(
+                    model=model_type,
+                    config=types.GenerateContentConfig(system_instruction=system_prompt, tools=tools)
+                )
+                chat_dict[user_id_str] = chat
+            except Exception as e:
+                logger.error(f"Failed to set system prompt: {e}")
+                chat = client.aio.chats.create(model=model_type, tools=tools)
+                chat_dict[user_id_str] = chat
+        else:
+            chat = chat_dict[user_id_str]
+            
+        lang = get_user_lang(message.from_user.id)
+        if lang == "zh" and "用中文回复" not in m: m += "，请用中文回复"
+
+        retry_count = 0
+        # Use a copy of api_keys length for stable loop bound
+        max_retries = len(api_keys)
+        while retry_count < max_retries:
+            try:
+                response = await chat.send_message_stream(m)
+                full_response = ""
+                last_update = time.time()
+                update_interval = conf["streaming_update_interval"]
+
+                async for chunk in response:
+                    if hasattr(chunk, 'text') and chunk.text:
+                        full_response += chunk.text
+                        if time.time() - last_update >= update_interval:
+                            try:
+                                await safe_edit_message(bot, escape(full_response), sent_message.chat.id, sent_message.message_id, "MarkdownV2")
+                            except Exception as e:
+                                if "parse" in str(e).lower() or "entity" in str(e).lower():
+                                    await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
+                                else:
+                                    logger.warning(f"Error updating message during stream: {e}")
+                            last_update = time.time()
+
+                # Final message processing
+                try:
+                    final_text = escape(full_response)
+                    if not final_text.strip():
+                        final_text = get_user_text(message.from_user.id, 'error_info') + "\n" + "Model returned an empty response."
+                    await safe_edit_message(bot, final_text, sent_message.chat.id, sent_message.message_id, "MarkdownV2")
+                except Exception as e:
+                    if "parse" in str(e).lower() or "entity" in str(e).lower():
+                        await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
+                    else:
+                        logger.error(f"Final message update error: {e}", exc_info=True)
+                break # Success, exit loop
+                
+            except Exception as e:
+                error_str = repr(e)
+                logger.error(f"An error occurred during gemini_stream: {error_str}", exc_info=True)
+                error_msg = f"{get_user_text(message.from_user.id, 'error_info')}\nError: {error_str}\nSwitching key..."
+                await safe_edit_message(bot, error_msg, sent_message.chat.id, sent_message.message_id)
+
+                async with api_key_lock:
+                    switched = switch_to_next_api_key()
+                
+                if switched:
+                    retry_count += 1
+                    # Re-create chat object with the new client
+                    system_prompt = get_system_prompt(message.from_user.id)
+                    chat = client.aio.chats.create(
+                        model=model_type,
+                        config=types.GenerateContentConfig(system_instruction=system_prompt, tools=tools)
+                    )
+                    chat_dict[user_id_str] = chat
+                else:
+                    await safe_edit_message(bot, get_user_text(message.from_user.id, 'all_api_quota_exhausted'), sent_message.chat.id, sent_message.message_id)
+                    break # No more keys to try
+            
+    except Exception as e:
+        logger.error("An unhandled error occurred in gemini_stream", exc_info=True)
         error_details = f"{error_info}\nError details: {str(e)}"
         if sent_message:
             await safe_edit_message(bot, error_details, sent_message.chat.id, sent_message.message_id)
