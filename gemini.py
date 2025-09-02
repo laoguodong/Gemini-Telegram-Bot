@@ -349,7 +349,7 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
                 await bot.reply_to(message, get_user_text(message.from_user.id, "api_key_list_empty") )
                 return
             
-        sent_message = await bot.reply_to(message, "🤖 Generating answers...")
+        sent_message = await bot.reply_to(message, get_user_text(message.from_user.id, "generating_answer"))
 
         chat_dict = gemini_chat_dict if model_type == model_1 else gemini_pro_chat_dict
         user_id_str = str(message.from_user.id)
@@ -415,7 +415,7 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
                 try:
                     final_text = escape(full_response)
                     if not final_text.strip():
-                        final_text = get_user_text(message.from_user.id, 'error_info') + "\n" + "Model returned an empty response."
+                        final_text = get_user_text(message.from_user.id, 'error_info') + "\n" + get_user_text(message.from_user.id, 'model_empty_response')
                     await safe_edit_message(bot, final_text, sent_message.chat.id, sent_message.message_id, "MarkdownV2")
                 except Exception as e:
                     if "parse" in str(e).lower() or "entity" in str(e).lower():
@@ -424,10 +424,49 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
                         logger.error(f"Final message update error: {e}", exc_info=True)
                 break # Success, exit loop
                 
+            except (google_api_exceptions.ResourceExhausted, google_api_exceptions.TooManyRequests) as e:
+                error_str = repr(e)
+                logger.warning(f"Rate limit or quota exhausted: {error_str}")
+                await safe_edit_message(bot, get_user_text(message.from_user.id, 'api_quota_exhausted'), sent_message.chat.id, sent_message.message_id)
+                
+                async with api_key_lock:
+                    switched = switch_to_next_api_key()
+                
+                if switched:
+                    retry_count += 1
+                    system_prompt = get_system_prompt(message.from_user.id)
+                    config_copy = generation_config.copy()
+                    config_copy['system_instruction'] = system_prompt
+                    chat = client.aio.chats.create(model=model_type, config=types.GenerateContentConfig(**config_copy))
+                    chat_dict[user_id_str] = chat
+                else:
+                    await safe_edit_message(bot, get_user_text(message.from_user.id, 'all_api_quota_exhausted'), sent_message.chat.id, sent_message.message_id)
+                    break
+            
+            except google_api_exceptions.PermissionDenied as e:
+                error_str = repr(e)
+                logger.error(f"Permission denied for API key: {error_str}", exc_info=True)
+                await safe_edit_message(bot, get_user_text(message.from_user.id, 'api_key_invalid'), sent_message.chat.id, sent_message.message_id)
+                
+                async with api_key_lock:
+                    switched = switch_to_next_api_key()
+                
+                if not switched:
+                    await safe_edit_message(bot, get_user_text(message.from_user.id, 'all_api_quota_exhausted'), sent_message.chat.id, sent_message.message_id)
+                    break
+                retry_count += 1
+
+            except google_api_exceptions.InvalidArgument as e:
+                error_str = repr(e)
+                logger.error(f"Invalid argument in request: {error_str}", exc_info=True)
+                error_msg = f"{get_user_text(message.from_user.id, 'error_info')}\n{get_user_text(message.from_user.id, 'invalid_argument_error')} {error_str}"
+                await safe_edit_message(bot, error_msg, sent_message.chat.id, sent_message.message_id)
+                break # Do not retry on invalid argument
+
             except Exception as e:
                 error_str = repr(e)
                 logger.error(f"An error occurred during gemini_stream: {error_str}", exc_info=True)
-                error_msg = f"{get_user_text(message.from_user.id, 'error_info')}\nError: {error_str}\nSwitching key..."
+                error_msg = f"{get_user_text(message.from_user.id, 'error_info')}\n{get_user_text(message.from_user.id, 'error_details')} {error_str}\n{get_user_text(message.from_user.id, 'switching_api_key')}"
                 await safe_edit_message(bot, error_msg, sent_message.chat.id, sent_message.message_id)
 
                 async with api_key_lock:
@@ -450,74 +489,117 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
             
     except Exception as e:
         logger.error("An unhandled error occurred in gemini_stream", exc_info=True)
-        error_details = f"{error_info}\nError details: {str(e)}"
+        error_details = f"{get_user_text(message.from_user.id, 'error_info')}\n{get_user_text(message.from_user.id, 'error_details')} {str(e)}"
         if sent_message:
             await safe_edit_message(bot, error_details, sent_message.chat.id, sent_message.message_id)
         else:
             await bot.reply_to(message, error_details)
 
 async def gemini_edit(bot: TeleBot, message: Message, m: str, photo_file: bytes):
-    async with api_key_lock:
-        if client is None:
-            await bot.reply_to(message, get_user_text(message.from_user.id, "api_key_list_empty") )
-            return
-    
-    sent_message = await bot.reply_to(message, download_pic_notify)
-    
-    max_retries = len(api_keys)
-    retry_count = 0
-    while retry_count < max_retries:
-        try:
-            image = Image.open(io.BytesIO(photo_file))
-            buffer = io.BytesIO()
-            image.save(buffer, format="JPEG")
-            image_bytes = buffer.getvalue()
-            
-            text_part = types.Part.from_text(text=m)
-            image_part = types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
-            
-            response = await client.aio.models.generate_content(
-                model=model_3,
-                contents=[text_part, image_part],
-                config=types.GenerateContentConfig(**draw_generation_config)
-            )
-            
-            if not hasattr(response, 'candidates') or not response.candidates:
-                await safe_edit_message(bot, f"{error_info}\nNo candidates generated", sent_message.chat.id, sent_message.message_id)
+    sent_message = None
+    try:
+        async with api_key_lock:
+            if client is None:
+                await bot.reply_to(message, get_user_text(message.from_user.id, "api_key_list_empty") )
                 return
-            
-            text, img = "", None
-            for part in response.candidates[0].content.parts:
-                if part.text: text += part.text
-                if part.inline_data: img = part.inline_data.data
-            
-            if img: await bot.send_photo(message.chat.id, io.BytesIO(img))
-            if text:
-                try:
-                    await bot.send_message(message.chat.id, escape(text), parse_mode="MarkdownV2")
-                except Exception as e:
-                    if "parse" in str(e).lower() or "entity" in str(e).lower():
-                        await bot.send_message(message.chat.id, text)
-                    else:
-                        raise e
-            
-            await bot.delete_message(chat_id=sent_message.chat.id, message_id=sent_message.message_id)
-            break
-
-        except Exception as e:
-            error_str = repr(e)
-            logger.error(f"An error occurred during gemini_edit: {error_str}", exc_info=True)
-            error_msg = f"{get_user_text(message.from_user.id, 'error_info')}\nError: {error_str}\nSwitching key..."
-            await safe_edit_message(bot, error_msg, sent_message.chat.id, sent_message.message_id)
-
-            async with api_key_lock:
-                switched = switch_to_next_api_key()
-
-            if switched:
-                retry_count += 1
-            else:
-                await safe_edit_message(bot, get_user_text(message.from_user.id, 'all_api_quota_exhausted'), sent_message.chat.id, sent_message.message_id)
+        
+        sent_message = await bot.reply_to(message, download_pic_notify)
+        
+        max_retries = len(api_keys)
+        retry_count = 0
+        while retry_count < max_retries:
+            try:
+                image = Image.open(io.BytesIO(photo_file))
+                buffer = io.BytesIO()
+                image.save(buffer, format="JPEG")
+                image_bytes = buffer.getvalue()
+                
+                text_part = types.Part.from_text(text=m)
+                image_part = types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
+                
+                response = await client.aio.models.generate_content(
+                    model=model_3,
+                    contents=[text_part, image_part],
+                    config=types.GenerateContentConfig(**draw_generation_config)
+                )
+                
+                if not hasattr(response, 'candidates') or not response.candidates:
+                    await safe_edit_message(bot, f"{get_user_text(message.from_user.id, 'error_info')}\n{get_user_text(message.from_user.id, 'no_candidates_generated')}", sent_message.chat.id, sent_message.message_id)
+                    return
+                
+                text, img = "", None
+                for part in response.candidates[0].content.parts:
+                    if part.text: text += part.text
+                    if part.inline_data: img = part.inline_data.data
+                
+                if img: await bot.send_photo(message.chat.id, io.BytesIO(img))
+                if text:
+                    try:
+                        await bot.send_message(message.chat.id, escape(text), parse_mode="MarkdownV2")
+                    except Exception as e:
+                        if "parse" in str(e).lower() or "entity" in str(e).lower():
+                            await bot.send_message(message.chat.id, text)
+                        else:
+                            raise e
+                
+                await bot.delete_message(chat_id=sent_message.chat.id, message_id=sent_message.message_id)
                 break
+
+            except (google_api_exceptions.ResourceExhausted, google_api_exceptions.TooManyRequests) as e:
+                error_str = repr(e)
+                logger.warning(f"Rate limit or quota exhausted in gemini_edit: {error_str}")
+                await safe_edit_message(bot, get_user_text(message.from_user.id, 'api_quota_exhausted'), sent_message.chat.id, sent_message.message_id)
+                
+                async with api_key_lock:
+                    switched = switch_to_next_api_key()
+                
+                if switched:
+                    retry_count += 1
+                else:
+                    await safe_edit_message(bot, get_user_text(message.from_user.id, 'all_api_quota_exhausted'), sent_message.chat.id, sent_message.message_id)
+                    break
+
+            except google_api_exceptions.PermissionDenied as e:
+                error_str = repr(e)
+                logger.error(f"Permission denied for API key in gemini_edit: {error_str}", exc_info=True)
+                await safe_edit_message(bot, get_user_text(message.from_user.id, 'api_key_invalid'), sent_message.chat.id, sent_message.message_id)
+                
+                async with api_key_lock:
+                    switched = switch_to_next_api_key()
+                
+                if not switched:
+                    await safe_edit_message(bot, get_user_text(message.from_user.id, 'all_api_quota_exhausted'), sent_message.chat.id, sent_message.message_id)
+                    break
+                retry_count += 1
+
+            except google_api_exceptions.InvalidArgument as e:
+                error_str = repr(e)
+                logger.error(f"Invalid argument in gemini_edit request: {error_str}", exc_info=True)
+                error_msg = f"{get_user_text(message.from_user.id, 'error_info')}\n{get_user_text(message.from_user.id, 'invalid_argument_error')} {error_str}"
+                await safe_edit_message(bot, error_msg, sent_message.chat.id, sent_message.message_id)
+                break
+
+            except Exception as e:
+                error_str = repr(e)
+                logger.error(f"An error occurred during gemini_edit: {error_str}", exc_info=True)
+                error_msg = f"{get_user_text(message.from_user.id, 'error_info')}\n{get_user_text(message.from_user.id, 'error_details')} {error_str}\n{get_user_text(message.from_user.id, 'switching_api_key')}"
+                await safe_edit_message(bot, error_msg, sent_message.chat.id, sent_message.message_id)
+
+                async with api_key_lock:
+                    switched = switch_to_next_api_key()
+
+                if switched:
+                    retry_count += 1
+                else:
+                    await safe_edit_message(bot, get_user_text(message.from_user.id, 'all_api_quota_exhausted'), sent_message.chat.id, sent_message.message_id)
+                    break
+    except Exception as e:
+        logger.error("An unhandled error occurred in gemini_edit", exc_info=True)
+        error_details = f"{get_user_text(message.from_user.id, 'error_info')}\n{get_user_text(message.from_user.id, 'error_details')} {str(e)}"
+        if sent_message:
+            await safe_edit_message(bot, error_details, sent_message.chat.id, sent_message.message_id)
+        else:
+            await bot.reply_to(message, error_details)
         
 async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: bytes, prompt: str = ""):
     sent_message = None
@@ -531,7 +613,7 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
         lang = get_user_lang(message.from_user.id)
         
         if lang == "zh" and "用中文回复" not in prompt: prompt += "，请用中文回复"
-        if not prompt: prompt = "描述这张图片" if lang == "zh" else "Describe this image"
+        if not prompt: prompt = get_user_text(message.from_user.id, "describe_image_prompt")
 
         max_retries = len(api_keys)
         retry_count = 0
@@ -597,7 +679,7 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
                 try:
                     final_text = escape(full_response)
                     if not final_text.strip():
-                        final_text = get_user_text(message.from_user.id, 'error_info') + "\n" + "Model returned an empty response."
+                        final_text = get_user_text(message.from_user.id, 'error_info') + "\n" + get_user_text(message.from_user.id, 'model_empty_response')
                     await safe_edit_message(bot, final_text, sent_message.chat.id, sent_message.message_id, "MarkdownV2")
                 except Exception as e:
                     if "parse" in str(e).lower() or "entity" in str(e).lower():
@@ -606,10 +688,46 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
                         logger.error(f"Final image understanding message update error: {e}", exc_info=True)
                 break
             
+            except (google_api_exceptions.ResourceExhausted, google_api_exceptions.TooManyRequests) as e:
+                error_str = repr(e)
+                logger.warning(f"Rate limit or quota exhausted in gemini_image_understand: {error_str}")
+                await safe_edit_message(bot, get_user_text(message.from_user.id, 'api_quota_exhausted'), sent_message.chat.id, sent_message.message_id)
+                
+                async with api_key_lock:
+                    switched = switch_to_next_api_key()
+                
+                if switched:
+                    retry_count += 1
+                    if user_id in active_chat_dict: del active_chat_dict[user_id]
+                else:
+                    await safe_edit_message(bot, get_user_text(message.from_user.id, 'all_api_quota_exhausted'), sent_message.chat.id, sent_message.message_id)
+                    break
+
+            except google_api_exceptions.PermissionDenied as e:
+                error_str = repr(e)
+                logger.error(f"Permission denied for API key in gemini_image_understand: {error_str}", exc_info=True)
+                await safe_edit_message(bot, get_user_text(message.from_user.id, 'api_key_invalid'), sent_message.chat.id, sent_message.message_id)
+                
+                async with api_key_lock:
+                    switched = switch_to_next_api_key()
+                
+                if not switched:
+                    await safe_edit_message(bot, get_user_text(message.from_user.id, 'all_api_quota_exhausted'), sent_message.chat.id, sent_message.message_id)
+                    break
+                retry_count += 1
+                if user_id in active_chat_dict: del active_chat_dict[user_id]
+
+            except google_api_exceptions.InvalidArgument as e:
+                error_str = repr(e)
+                logger.error(f"Invalid argument in gemini_image_understand request: {error_str}", exc_info=True)
+                error_msg = f"{get_user_text(message.from_user.id, 'error_info')}\n{get_user_text(message.from_user.id, 'invalid_argument_error')} {error_str}"
+                await safe_edit_message(bot, error_msg, sent_message.chat.id, sent_message.message_id)
+                break
+
             except Exception as e:
                 error_str = repr(e)
                 logger.error(f"An error occurred during gemini_image_understand: {error_str}", exc_info=True)
-                error_msg = f"{get_user_text(message.from_user.id, 'error_info')}\nError: {error_str}\nSwitching key..."
+                error_msg = f"{get_user_text(message.from_user.id, 'error_info')}\n{get_user_text(message.from_user.id, 'error_details')} {error_str}\n{get_user_text(message.from_user.id, 'switching_api_key')}"
                 await safe_edit_message(bot, error_msg, sent_message.chat.id, sent_message.message_id)
 
                 async with api_key_lock:
@@ -624,11 +742,12 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
                 
     except Exception as e:
         logger.error("An unhandled error occurred in gemini_image_understand", exc_info=True)
-        error_details = f"{error_info}\nError details: {str(e)}"
+        error_details = f"{get_user_text(message.from_user.id, 'error_info')}\n{get_user_text(message.from_user.id, 'error_details')} {str(e)}"
         if sent_message:
             await safe_edit_message(bot, error_details, sent_message.chat.id, sent_message.message_id)
         else:
             await bot.reply_to(message, error_details)
+
 
 async def gemini_draw(bot:TeleBot, message:Message, m:str):
     sent_message = None
@@ -651,7 +770,7 @@ async def gemini_draw(bot:TeleBot, message:Message, m:str):
                 )
                 
                 if not hasattr(response, 'candidates') or not response.candidates:
-                    await safe_edit_message(bot, f"{error_info}\nNo candidates generated", sent_message.chat.id, sent_message.message_id)
+                    await safe_edit_message(bot, f"{get_user_text(message.from_user.id, 'error_info')}\n{get_user_text(message.from_user.id, 'no_candidates_generated')}", sent_message.chat.id, sent_message.message_id)
                     break
                 
                 text, img = "", None
@@ -673,10 +792,44 @@ async def gemini_draw(bot:TeleBot, message:Message, m:str):
                 except Exception: pass
                 break
                 
+            except (google_api_exceptions.ResourceExhausted, google_api_exceptions.TooManyRequests) as e:
+                error_str = repr(e)
+                logger.warning(f"Rate limit or quota exhausted in gemini_draw: {error_str}")
+                await safe_edit_message(bot, get_user_text(message.from_user.id, 'api_quota_exhausted'), sent_message.chat.id, sent_message.message_id)
+                
+                async with api_key_lock:
+                    switched = switch_to_next_api_key()
+                
+                if switched:
+                    retry_count += 1
+                else:
+                    await safe_edit_message(bot, get_user_text(message.from_user.id, 'all_api_quota_exhausted'), sent_message.chat.id, sent_message.message_id)
+                    break
+
+            except google_api_exceptions.PermissionDenied as e:
+                error_str = repr(e)
+                logger.error(f"Permission denied for API key in gemini_draw: {error_str}", exc_info=True)
+                await safe_edit_message(bot, get_user_text(message.from_user.id, 'api_key_invalid'), sent_message.chat.id, sent_message.message_id)
+                
+                async with api_key_lock:
+                    switched = switch_to_next_api_key()
+                
+                if not switched:
+                    await safe_edit_message(bot, get_user_text(message.from_user.id, 'all_api_quota_exhausted'), sent_message.chat.id, sent_message.message_id)
+                    break
+                retry_count += 1
+
+            except google_api_exceptions.InvalidArgument as e:
+                error_str = repr(e)
+                logger.error(f"Invalid argument in gemini_draw request: {error_str}", exc_info=True)
+                error_msg = f"{get_user_text(message.from_user.id, 'error_info')}\n{get_user_text(message.from_user.id, 'invalid_argument_error')} {error_str}"
+                await safe_edit_message(bot, error_msg, sent_message.chat.id, sent_message.message_id)
+                break
+
             except Exception as e:
                 error_str = repr(e)
                 logger.error(f"An error occurred during gemini_draw: {error_str}", exc_info=True)
-                error_msg = f"{get_user_text(message.from_user.id, 'error_info')}\nError: {error_str}\nSwitching key..."
+                error_msg = f"{get_user_text(message.from_user.id, 'error_info')}\n{get_user_text(message.from_user.id, 'error_details')} {error_str}\n{get_user_text(message.from_user.id, 'switching_api_key')}"
                 await safe_edit_message(bot, error_msg, sent_message.chat.id, sent_message.message_id)
 
                 async with api_key_lock:
@@ -690,7 +843,7 @@ async def gemini_draw(bot:TeleBot, message:Message, m:str):
             
     except Exception as e:
         logger.error("An unhandled error occurred in gemini_draw", exc_info=True)
-        error_details = f"{error_info}\nError details: {str(e)}"
+        error_details = f"{get_user_text(message.from_user.id, 'error_info')}\n{get_user_text(message.from_user.id, 'error_details')} {str(e)}"
         if sent_message:
             await safe_edit_message(bot, error_details, sent_message.chat.id, sent_message.message_id)
         else:
@@ -758,7 +911,7 @@ async def gemini_stream_switchable(bot:TeleBot, message:Message, m:str, model_ty
                 await bot.reply_to(message, get_user_text(message.from_user.id, "api_key_list_empty") )
                 return
             
-        sent_message = await bot.reply_to(message, "🤖 Generating answers...")
+        sent_message = await bot.reply_to(message, get_user_text(message.from_user.id, "generating_answer"))
 
         chat_dict = switchable_chat_sessions
         user_id_str = str(message.from_user.id)
@@ -824,7 +977,7 @@ async def gemini_stream_switchable(bot:TeleBot, message:Message, m:str, model_ty
                 try:
                     final_text = escape(full_response)
                     if not final_text.strip():
-                        final_text = get_user_text(message.from_user.id, 'error_info') + "\n" + "Model returned an empty response."
+                        final_text = get_user_text(message.from_user.id, 'error_info') + "\n" + get_user_text(message.from_user.id, 'model_empty_response')
                     await safe_edit_message(bot, final_text, sent_message.chat.id, sent_message.message_id, "MarkdownV2")
                 except Exception as e:
                     if "parse" in str(e).lower() or "entity" in str(e).lower():
@@ -833,10 +986,49 @@ async def gemini_stream_switchable(bot:TeleBot, message:Message, m:str, model_ty
                         logger.error(f"Final message update error: {e}", exc_info=True)
                 break # Success, exit loop
                 
+            except (google_api_exceptions.ResourceExhausted, google_api_exceptions.TooManyRequests) as e:
+                error_str = repr(e)
+                logger.warning(f"Rate limit or quota exhausted: {error_str}")
+                await safe_edit_message(bot, get_user_text(message.from_user.id, 'api_quota_exhausted'), sent_message.chat.id, sent_message.message_id)
+                
+                async with api_key_lock:
+                    switched = switch_to_next_api_key()
+                
+                if switched:
+                    retry_count += 1
+                    system_prompt = get_system_prompt(message.from_user.id)
+                    config_copy = generation_config.copy()
+                    config_copy['system_instruction'] = system_prompt
+                    chat = client.aio.chats.create(model=model_type, config=types.GenerateContentConfig(**config_copy))
+                    chat_dict[user_id_str] = chat
+                else:
+                    await safe_edit_message(bot, get_user_text(message.from_user.id, 'all_api_quota_exhausted'), sent_message.chat.id, sent_message.message_id)
+                    break
+            
+            except google_api_exceptions.PermissionDenied as e:
+                error_str = repr(e)
+                logger.error(f"Permission denied for API key: {error_str}", exc_info=True)
+                await safe_edit_message(bot, get_user_text(message.from_user.id, 'api_key_invalid'), sent_message.chat.id, sent_message.message_id)
+                
+                async with api_key_lock:
+                    switched = switch_to_next_api_key()
+                
+                if not switched:
+                    await safe_edit_message(bot, get_user_text(message.from_user.id, 'all_api_quota_exhausted'), sent_message.chat.id, sent_message.message_id)
+                    break
+                retry_count += 1
+
+            except google_api_exceptions.InvalidArgument as e:
+                error_str = repr(e)
+                logger.error(f"Invalid argument in request: {error_str}", exc_info=True)
+                error_msg = f"{get_user_text(message.from_user.id, 'error_info')}\n{get_user_text(message.from_user.id, 'invalid_argument_error')} {error_str}"
+                await safe_edit_message(bot, error_msg, sent_message.chat.id, sent_message.message_id)
+                break # Do not retry on invalid argument
+
             except Exception as e:
                 error_str = repr(e)
                 logger.error(f"An error occurred during gemini_stream: {error_str}", exc_info=True)
-                error_msg = f"{get_user_text(message.from_user.id, 'error_info')}\nError: {error_str}\nSwitching key..."
+                error_msg = f"{get_user_text(message.from_user.id, 'error_info')}\n{get_user_text(message.from_user.id, 'error_details')} {error_str}\n{get_user_text(message.from_user.id, 'switching_api_key')}"
                 await safe_edit_message(bot, error_msg, sent_message.chat.id, sent_message.message_id)
 
                 async with api_key_lock:
@@ -859,7 +1051,7 @@ async def gemini_stream_switchable(bot:TeleBot, message:Message, m:str, model_ty
             
     except Exception as e:
         logger.error("An unhandled error occurred in gemini_stream", exc_info=True)
-        error_details = f"{error_info}\nError details: {str(e)}"
+        error_details = f"{get_user_text(message.from_user.id, 'error_info')}\n{get_user_text(message.from_user.id, 'error_details')} {str(e)}"
         if sent_message:
             await safe_edit_message(bot, error_details, sent_message.chat.id, sent_message.message_id)
         else:

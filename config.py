@@ -58,7 +58,14 @@ lang_settings = {
         "api_clean_results_title": "密钥清理完成",
         "api_clean_removed_keys": "已成功删除以下无效密钥：",
         "api_clean_no_invalid_keys": "✅ 未发现可清理的无效密钥。",
-        "api_clean_post_summary_title": "📊 剩余密钥状态："
+        "api_clean_post_summary_title": "📊 剩余密钥状态：",
+        "generating_answer": "🤖 正在生成回答...",
+        "model_empty_response": "模型返回了空内容。",
+        "invalid_argument_error": "请求参数错误，请检查您的输入。详情：",
+        "error_details": "错误详情：",
+        "switching_api_key": "正在切换密钥...",
+        "no_candidates_generated": "模型未能生成任何内容。",
+        "describe_image_prompt": "描述这张图片"
     },
     "en": {
         "error_info": "⚠️⚠️⚠️\nSomething went wrong!\nPlease try to change your prompt or contact the admin!",
@@ -112,7 +119,14 @@ lang_settings = {
         "api_clean_results_title": "Key cleanup complete",
         "api_clean_removed_keys": "The following invalid keys have been successfully removed:",
         "api_clean_no_invalid_keys": "✅ No invalid keys found to remove.",
-        "api_clean_post_summary_title": "📊 Status of Remaining Keys:"
+        "api_clean_post_summary_title": "📊 Status of Remaining Keys:",
+        "generating_answer": "🤖 Generating answers...",
+        "model_empty_response": "Model returned an empty response.",
+        "invalid_argument_error": "Invalid argument in request, please check your input. Details: ",
+        "error_details": "Error details: ",
+        "switching_api_key": "Switching API key...",
+        "no_candidates_generated": "The model failed to generate any content.",
+        "describe_image_prompt": "Describe this image"
     }
 }
 
