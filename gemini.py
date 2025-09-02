@@ -391,17 +391,25 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
                 update_interval = conf["streaming_update_interval"]
 
                 async for chunk in response:
-                    if hasattr(chunk, 'text') and chunk.text:
-                        full_response += chunk.text
-                        if time.time() - last_update >= update_interval:
-                            try:
-                                await safe_edit_message(bot, escape(full_response), sent_message.chat.id, sent_message.message_id, "MarkdownV2")
-                            except Exception as e:
-                                if "parse" in str(e).lower() or "entity" in str(e).lower():
-                                    await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
-                                else:
-                                    logger.warning(f"Error updating message during stream: {e}")
-                            last_update = time.time()
+                    for part in chunk.candidates[0].content.parts:
+                        if part.text:
+                            full_response += part.text
+                        if hasattr(part, 'executable_code') and part.executable_code:
+                            code_to_display = f"\n\n> **Executing Code:**\n```python\n{part.executable_code.code}\n```"
+                            full_response += code_to_display
+                        if hasattr(part, 'code_execution_result') and part.code_execution_result:
+                            result_to_display = f"\n\n> **Result:**\n{part.code_execution_result.output}\n"
+                            full_response += result_to_display
+                    
+                    if time.time() - last_update >= update_interval:
+                        try:
+                            await safe_edit_message(bot, escape(full_response), sent_message.chat.id, sent_message.message_id, "MarkdownV2")
+                        except Exception as e:
+                            if "parse" in str(e).lower() or "entity" in str(e).lower():
+                                await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
+                            else:
+                                logger.warning(f"Error updating message during stream: {e}")
+                        last_update = time.time()
 
                 # Final message processing
                 try:
@@ -430,7 +438,7 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
                     # Re-create chat object with the new client
                     system_prompt = get_system_prompt(message.from_user.id)
                     config_copy = generation_config.copy()
-                    config_copy['system_instruction'] = types.Part.from_text(system_prompt)
+                    config_copy['system_instruction'] = system_prompt
                     chat = client.aio.chats.create(
                         model=model_type,
                         config=types.GenerateContentConfig(**config_copy)
@@ -792,17 +800,25 @@ async def gemini_stream_switchable(bot:TeleBot, message:Message, m:str, model_ty
                 update_interval = conf["streaming_update_interval"]
 
                 async for chunk in response:
-                    if hasattr(chunk, 'text') and chunk.text:
-                        full_response += chunk.text
-                        if time.time() - last_update >= update_interval:
-                            try:
-                                await safe_edit_message(bot, escape(full_response), sent_message.chat.id, sent_message.message_id, "MarkdownV2")
-                            except Exception as e:
-                                if "parse" in str(e).lower() or "entity" in str(e).lower():
-                                    await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
-                                else:
-                                    logger.warning(f"Error updating message during stream: {e}")
-                            last_update = time.time()
+                    for part in chunk.candidates[0].content.parts:
+                        if part.text:
+                            full_response += part.text
+                        if hasattr(part, 'executable_code') and part.executable_code:
+                            code_to_display = f"\n\n> **Executing Code:**\n```python\n{part.executable_code.code}\n```"
+                            full_response += code_to_display
+                        if hasattr(part, 'code_execution_result') and part.code_execution_result:
+                            result_to_display = f"\n\n> **Result:**\n{part.code_execution_result.output}\n"
+                            full_response += result_to_display
+                    
+                    if time.time() - last_update >= update_interval:
+                        try:
+                            await safe_edit_message(bot, escape(full_response), sent_message.chat.id, sent_message.message_id, "MarkdownV2")
+                        except Exception as e:
+                            if "parse" in str(e).lower() or "entity" in str(e).lower():
+                                await safe_edit_message(bot, full_response, sent_message.chat.id, sent_message.message_id)
+                            else:
+                                logger.warning(f"Error updating message during stream: {e}")
+                        last_update = time.time()
 
                 # Final message processing
                 try:
@@ -831,7 +847,7 @@ async def gemini_stream_switchable(bot:TeleBot, message:Message, m:str, model_ty
                     # Re-create chat object with the new client
                     system_prompt = get_system_prompt(message.from_user.id)
                     config_copy = generation_config.copy()
-                    config_copy['system_instruction'] = types.Part.from_text(system_prompt)
+                    config_copy['system_instruction'] = system_prompt
                     chat = client.aio.chats.create(
                         model=model_type,
                         config=types.GenerateContentConfig(**config_copy)

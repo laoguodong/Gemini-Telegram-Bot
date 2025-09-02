@@ -152,8 +152,9 @@ safety_settings = [
 
 # 定义工具
 tools = [
-    Tool(google_search=GoogleSearch),
-    Tool(url_context=UrlContext),
+    types.Tool(google_search=types.GoogleSearch()),
+    types.Tool(url_context=types.UrlContext()),
+    types.Tool(code_execution=types.ToolCodeExecution()),
 ]
 
 # 为文本模型创建配置
