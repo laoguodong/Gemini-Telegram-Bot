@@ -433,60 +433,87 @@ async def api_check_handler(message: Message, bot: TeleBot):
         keys_to_check_from_message = []
         
         if len(command_parts) > 1:
-            # Keys are provided after the command
             keys_text = command_parts[1]
             keys_to_check_from_message = [key.strip() for key in re.split(r'[\s,]+', keys_text) if key.strip()]
 
-        sent_message = await bot.reply_to(message, get_user_text(user_id, "api_checking_message"))
+        sent_message = await bot.reply_to(message, get_user_text(user_id, "api_checking_message") )
         
         paid_model = conf.get("paid_model_for_check") or conf.get("model_1")
         standard_model = conf.get("model_1")
         
+        # If keys are provided, filter for paid keys and add them.
         if keys_to_check_from_message:
-            # Case 1: Check keys provided in the message
-            paid_keys, standard_keys, rate_limited_keys, invalid_keys = await check_individual_keys(
+            paid_keys, _, _, _ = await check_individual_keys(
                 keys_to_check_from_message, paid_model, standard_model
             )
-            # For direct checks, we don't show rate-limited as a separate category to the user
-            standard_keys.extend(rate_limited_keys)
+            
+            if not paid_keys:
+                await bot.edit_message_text("在您提供的密钥中未检测到有效的付费密钥。", sent_message.chat.id, sent_message.message_id)
+                return
+
+            newly_added_keys = []
+            already_exist_keys = []
+            async with api_key_lock:
+                for _, key in paid_keys:
+                    if gemini.add_api_key(key):
+                        newly_added_keys.append(key)
+                    else:
+                        already_exist_keys.append(key)
+            
+            response_lines = ["付费密钥筛选完成：\n"]
+            if newly_added_keys:
+                response_lines.append("✅ 新增付费密钥:")
+                for key in newly_added_keys:
+                    response_lines.append(f"  - {key}")
+            
+            if already_exist_keys:
+                response_lines.append("\n☑️ 已存在的付费密钥:")
+                for key in already_exist_keys:
+                    response_lines.append(f"  - {key}")
+            
+            final_response = "\n".join(response_lines)
+            await bot.edit_message_text(final_response, sent_message.chat.id, sent_message.message_id)
+
         else:
-            # Case 2: No keys provided, check all stored keys (original functionality)
+            # No keys provided, check all stored keys.
             async with api_key_lock:
                 paid_keys, standard_keys, rate_limited_keys, invalid_keys = await unified_api_key_check(
                     paid_model, standard_model
                 )
 
-        # Formatting the response
-        title = get_user_text(user_id, 'api_check_results_title')
-        paid_title = f"{get_user_text(user_id, 'api_check_paid_keys')} ({len(paid_keys)})"
-        standard_title = f"{get_user_text(user_id, 'api_check_standard_keys')} ({len(standard_keys)})"
-        invalid_title = f"{get_user_text(user_id, 'api_check_invalid_keys')} ({len(invalid_keys)})"
+            title = get_user_text(user_id, 'api_check_results_title')
+            paid_title = f"{get_user_text(user_id, 'api_check_paid_keys')} ({len(paid_keys)})"
+            standard_title = f"{get_user_text(user_id, 'api_check_standard_keys')} ({len(standard_keys)})"
+            rate_limited_title = f"{get_user_text(user_id, 'api_check_rate_limited_keys')} ({len(rate_limited_keys)})"
+            invalid_title = f"{get_user_text(user_id, 'api_check_invalid_keys')} ({len(invalid_keys)})"
 
-        response_lines = [f"{title}\n"]
-        
-        response_lines.append(paid_title)
-        if paid_keys:
-            for _, key in paid_keys: response_lines.append(key)
-                
-        response_lines.append(f"\n{standard_title}")
-        if standard_keys:
-            for _, key in standard_keys: response_lines.append(key)
+            response_lines = [f"{title}\n"]
+            
+            response_lines.append(paid_title)
+            if paid_keys:
+                for i, key in paid_keys: response_lines.append(f"{i}: {key}")
+                    
+            response_lines.append(f"\n{standard_title}")
+            if standard_keys:
+                for i, key in standard_keys: response_lines.append(f"{i}: {key}")
 
-        if not keys_to_check_from_message and rate_limited_keys:
-             rate_limited_title = f"{get_user_text(user_id, 'api_check_rate_limited_keys')} ({len(rate_limited_keys)})"
-             response_lines.append(f"\n{rate_limited_title}")
-             for _, key in rate_limited_keys: response_lines.append(key)
-                
-        response_lines.append(f"\n{invalid_title}")
-        if invalid_keys:
-            for _, key in invalid_keys: response_lines.append(key)
-                
-        response = "\n".join(response_lines)
-        await bot.edit_message_text(response, sent_message.chat.id, sent_message.message_id)
+            if rate_limited_keys:
+                 response_lines.append(f"\n{rate_limited_title}")
+                 for i, key in rate_limited_keys: response_lines.append(f"{i}: {key}")
+                    
+            response_lines.append(f"\n{invalid_title}")
+            if invalid_keys:
+                for i, key in invalid_keys: response_lines.append(f"{i}: {key}")
+                    
+            response = "\n".join(response_lines)
+            await bot.edit_message_text(response, sent_message.chat.id, sent_message.message_id)
 
     except Exception as e:
         logger.error(f"An error occurred in api_check_handler: {e}", exc_info=True)
         await bot.reply_to(message, f"An error occurred: {e}")
+
+
+
 
 
 @admin_only
