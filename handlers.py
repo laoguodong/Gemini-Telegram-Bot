@@ -491,19 +491,19 @@ async def api_check_handler(message: Message, bot: TeleBot):
             
             response_lines.append(paid_title)
             if paid_keys:
-                for i, key in paid_keys: response_lines.append(f"{i}: {key}")
+                for _, key in paid_keys: response_lines.append(key)
                     
             response_lines.append(f"\n{standard_title}")
             if standard_keys:
-                for i, key in standard_keys: response_lines.append(f"{i}: {key}")
+                for _, key in standard_keys: response_lines.append(key)
 
             if rate_limited_keys:
                  response_lines.append(f"\n{rate_limited_title}")
-                 for i, key in rate_limited_keys: response_lines.append(f"{i}: {key}")
+                 for _, key in rate_limited_keys: response_lines.append(key)
                     
             response_lines.append(f"\n{invalid_title}")
             if invalid_keys:
-                for i, key in invalid_keys: response_lines.append(f"{i}: {key}")
+                for _, key in invalid_keys: response_lines.append(key)
                     
             response = "\n".join(response_lines)
             await bot.edit_message_text(response, sent_message.chat.id, sent_message.message_id)
