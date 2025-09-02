@@ -46,11 +46,6 @@ error_info              =       conf["error_info"]
 before_generate_info    =       conf["before_generate_info"]
 download_pic_notify     =       conf["download_pic_notify"]
 
-tools = [
-    Tool(google_search=GoogleSearch),
-    Tool(url_context=UrlContext),
-]
-
 client = None
 
 async def initialize_client():
@@ -363,14 +358,21 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
         if user_id_str not in chat_dict:
             system_prompt = get_system_prompt(message.from_user.id)
             try:
+                # Create a copy of the base config and add the system prompt
+                config_copy = generation_config.copy()
+                config_copy['system_instruction'] = system_prompt
+                
                 chat = client.aio.chats.create(
                     model=model_type,
-                    config=types.GenerateContentConfig(system_instruction=system_prompt, tools=tools)
+                    config=types.GenerateContentConfig(**config_copy)
                 )
                 chat_dict[user_id_str] = chat
             except Exception as e:
                 logger.error(f"Failed to set system prompt: {e}")
-                chat = client.aio.chats.create(model=model_type, tools=tools)
+                chat = client.aio.chats.create(
+                    model=model_type,
+                    config=types.GenerateContentConfig(**generation_config)
+                )
                 chat_dict[user_id_str] = chat
         else:
             chat = chat_dict[user_id_str]
@@ -427,9 +429,11 @@ async def gemini_stream(bot:TeleBot, message:Message, m:str, model_type:str):
                     retry_count += 1
                     # Re-create chat object with the new client
                     system_prompt = get_system_prompt(message.from_user.id)
+                    config_copy = generation_config.copy()
+                    config_copy['system_instruction'] = types.Part.from_text(system_prompt)
                     chat = client.aio.chats.create(
                         model=model_type,
-                        config=types.GenerateContentConfig(system_instruction=system_prompt, tools=tools)
+                        config=types.GenerateContentConfig(**config_copy)
                     )
                     chat_dict[user_id_str] = chat
                 else:
@@ -549,9 +553,13 @@ async def gemini_image_understand(bot: TeleBot, message: Message, photo_file: by
                 text_part = types.Part.from_text(text=prompt)
                 
                 if user_id not in active_chat_dict:
+                    # Create a copy of the base config and add the system prompt
+                    config_copy = generation_config.copy()
+                    config_copy['system_instruction'] = system_prompt
+                    
                     chat = client.aio.chats.create(
                         model=current_model_name,
-                        config=types.GenerateContentConfig(system_instruction=system_prompt, tools=tools)
+                        config=types.GenerateContentConfig(**config_copy)
                     )
                     active_chat_dict[user_id] = chat
                 else:
@@ -714,10 +722,14 @@ async def switch_model_and_inherit_history(user_id):
     # Create a new chat with the new model and the old history
     system_prompt = get_system_prompt(user_id)
     try:
+        # Create a copy of the base config and add the system prompt
+        config_copy = generation_config.copy()
+        config_copy['system_instruction'] = system_prompt
+        
         new_chat = client.aio.chats.create(
             model=new_model_name,
             history=history,
-            config=types.GenerateContentConfig(system_instruction=system_prompt, tools=tools)
+            config=types.GenerateContentConfig(**config_copy)
         )
         switchable_chat_sessions[user_id_str] = new_chat
         logger.info(f"User {user_id_str} switched to model {new_model_name} inheriting {len(history)} messages.")
@@ -747,14 +759,21 @@ async def gemini_stream_switchable(bot:TeleBot, message:Message, m:str, model_ty
         if user_id_str not in chat_dict:
             system_prompt = get_system_prompt(message.from_user.id)
             try:
+                # Create a copy of the base config and add the system prompt
+                config_copy = generation_config.copy()
+                config_copy['system_instruction'] = system_prompt
+                
                 chat = client.aio.chats.create(
                     model=model_type,
-                    config=types.GenerateContentConfig(system_instruction=system_prompt, tools=tools)
+                    config=types.GenerateContentConfig(**config_copy)
                 )
                 chat_dict[user_id_str] = chat
             except Exception as e:
                 logger.error(f"Failed to set system prompt: {e}")
-                chat = client.aio.chats.create(model=model_type, tools=tools)
+                chat = client.aio.chats.create(
+                    model=model_type,
+                    config=types.GenerateContentConfig(**generation_config)
+                )
                 chat_dict[user_id_str] = chat
         else:
             chat = chat_dict[user_id_str]
@@ -811,9 +830,11 @@ async def gemini_stream_switchable(bot:TeleBot, message:Message, m:str, model_ty
                     retry_count += 1
                     # Re-create chat object with the new client
                     system_prompt = get_system_prompt(message.from_user.id)
+                    config_copy = generation_config.copy()
+                    config_copy['system_instruction'] = types.Part.from_text(system_prompt)
                     chat = client.aio.chats.create(
                         model=model_type,
-                        config=types.GenerateContentConfig(system_instruction=system_prompt, tools=tools)
+                        config=types.GenerateContentConfig(**config_copy)
                     )
                     chat_dict[user_id_str] = chat
                 else:
